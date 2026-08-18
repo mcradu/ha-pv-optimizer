@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- Start Python through S6 `with-contenv` so Supervisor variables reach the process.
+- Remove unnecessary Supervisor API permission; Core proxy access remains enabled.
+
 ## 0.1.2
 
 - Request an explicit Supervisor API token in addition to Core API proxy access.

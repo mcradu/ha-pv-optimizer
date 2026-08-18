@@ -3,7 +3,8 @@ FROM ${BUILD_FROM}
 
 WORKDIR /app
 COPY app /app
-RUN chmod 0555 /app/run.py
+COPY run.sh /run.sh
+RUN chmod 0555 /app/run.py /run.sh
 
 EXPOSE 8099
-CMD ["python3", "/app/run.py"]
+CMD ["/run.sh"]
