@@ -50,6 +50,15 @@ class EngineTests(unittest.TestCase):
         result = calculate(base(battery_soc=60))
         self.assertIn("stop_soc_reached", result["blockers"])
 
+    def test_daytime_does_not_publish_active_night_thresholds(self):
+        result = calculate(base(sun_below_horizon=False, hours_until_sunrise=18.3, battery_soc=65))
+        self.assertEqual(result["blockers"], ["outside_night_window"])
+        self.assertIsNone(result["stop_soc"])
+        self.assertIsNone(result["start_soc"])
+        self.assertIsNone(result["needed_until_sunrise_kwh"])
+        self.assertIsNone(result["surplus_kwh"])
+        self.assertNotIn("stop_soc_reached", result["blockers"])
+
 
 if __name__ == "__main__":
     unittest.main()
