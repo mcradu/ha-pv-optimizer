@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -49,10 +50,11 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.1.0 requires shadow_mode=true")
+            raise RuntimeError("Version 0.1.1 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
+        self.last_error_signature = ""
 
     @staticmethod
     def _load_json(path: Path, fallback: dict) -> dict:
@@ -142,18 +144,34 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.1.0",
+                "version": "0.1.1",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
                 "decision": decision,
                 "requested_mode": self.state.get("requested_mode", "auto"),
                 "logs": self.state.get("logs", []),
+                "diagnostics": self.diagnostics(),
             }
             if mode == "night_max":
                 self.state["requested_mode"] = "auto"
                 self.add_log("Night MAX simulated for one cycle; mode reset to Auto")
                 self.save_state()
+        signature = " | ".join(sorted(set(errors)))
+        if signature and signature != self.last_error_signature:
+            LOG.error("Home Assistant read failed: %s", signature)
+        elif not signature and self.last_error_signature:
+            LOG.info("Home Assistant entity reads recovered")
+        self.last_error_signature = signature
+
+    def diagnostics(self) -> dict:
+        return {
+            "version": "0.1.1",
+            "shadow": True,
+            "supervisor_token_present": bool(os.getenv("SUPERVISOR_TOKEN")),
+            "home_assistant_api_url": self.client.base_url,
+            "configured_entity_count": len(self.options.get("entities", {})),
+        }
 
     def set_mode(self, mode: str) -> None:
         if mode not in {"auto", "night_max", "stop", "day", "failsafe", "test_500"}:
@@ -189,13 +207,15 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.1.0"})
+            self._json({"status": "ok", "shadow": True, "version": "0.1.1"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
         elif path == "/api/config":
             safe = dict(RUNTIME.options)
             self._json(safe)
+        elif path == "/api/diagnostics":
+            self._json(RUNTIME.diagnostics())
         else:
             super().do_GET()
 
@@ -228,6 +248,11 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.1.0 started in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.1.1 started in mandatory shadow mode")
+    LOG.info(
+        "Supervisor API diagnostics: token_present=%s api_url=%s",
+        RUNTIME.diagnostics()["supervisor_token_present"],
+        RUNTIME.client.base_url,
+    )
     threading.Thread(target=poll_loop, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", 8099), Handler).serve_forever()

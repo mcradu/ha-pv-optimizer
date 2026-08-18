@@ -21,6 +21,7 @@ class RuntimeTests(unittest.TestCase):
                     self.assertEqual(runtime.status["decision"]["state"], "blocked")
                     self.assertEqual(runtime.status["decision"]["target_export_w"], 0)
                     self.assertTrue(runtime.status["errors"])
+                    self.assertFalse(runtime.status["diagnostics"]["supervisor_token_present"])
 
 
 if __name__ == "__main__":
