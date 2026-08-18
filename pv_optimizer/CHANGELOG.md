@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.3
+
+- Replace charging-power recommendations with binary `ON`, `OFF`, and `NO ACTION` shadow requests.
+- Add voltage and PV hysteresis, five-minute stabilization, and minimum state duration.
+- Add sunset SOC trajectory and forecast-based catch-up decisions.
+- Keep charging power under exclusive inverter/BMS control; grid and generator charging are never requested.
+- Persist every charge evaluation and transition as rotating JSONL telemetry.
+- Show recent telemetry, determining phase, projected shortfall, and pending transitions in the Web UI.
+
 ## 0.2.1
 
 - Collapse raw runtime diagnostics by default on the Entity Health page.
