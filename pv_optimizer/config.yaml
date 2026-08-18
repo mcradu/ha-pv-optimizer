@@ -1,5 +1,5 @@
 name: HA PV Optimizer
-version: "0.2.1"
+version: "0.2.3"
 slug: pv_optimizer
 description: Explainable PV battery-export optimization with an integrated Web UI
 url: https://github.com/mcradu/ha-pv-optimizer
@@ -29,9 +29,14 @@ options:
   night_min_w: 200
   morning_max_w: 700
   charge_optimizer_enabled: true
-  charge_warning_voltage: 248
-  charge_critical_voltage: 251
-  charge_maximum_soc: 95
+  charge_on_voltage: 249
+  charge_off_voltage: 247
+  charge_stabilization_seconds: 300
+  charge_minimum_state_seconds: 300
+  sunset_target_soc: 100
+  pv_available_on_w: 300
+  pv_available_off_w: 100
+  forecast_safety_kwh: 0.5
   shadow_mode: true
   entities:
     battery_soc: sensor.ss_battery_soc
@@ -57,9 +62,14 @@ schema:
   night_min_w: int(0,5000)
   morning_max_w: int(0,5000)
   charge_optimizer_enabled: bool
-  charge_warning_voltage: float(230,260)
-  charge_critical_voltage: float(230,260)
-  charge_maximum_soc: float(50,100)
+  charge_on_voltage: float(230,260)
+  charge_off_voltage: float(230,260)
+  charge_stabilization_seconds: int(0,1800)
+  charge_minimum_state_seconds: int(0,3600)
+  sunset_target_soc: float(50,100)
+  pv_available_on_w: int(0,5000)
+  pv_available_off_w: int(0,5000)
+  forecast_safety_kwh: float(0,20)
   shadow_mode: bool
   entities:
     battery_soc: str

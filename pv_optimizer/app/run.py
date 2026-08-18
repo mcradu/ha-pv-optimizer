@@ -13,10 +13,12 @@ from urllib.parse import urlparse
 from engine import Inputs, calculate
 from charge_engine import ChargeInputs, calculate_charge
 from ha_client import HomeAssistantClient
+from telemetry import TelemetryStore
 
 ROOT = Path(__file__).parent
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/pv_optimizer_state.json")
+TELEMETRY_PATH = Path("/data/pv_optimizer_charge_telemetry.jsonl")
 LOG = logging.getLogger("pv_optimizer")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -32,9 +34,14 @@ DEFAULTS = {
     "night_min_w": 200,
     "morning_max_w": 700,
     "charge_optimizer_enabled": True,
-    "charge_warning_voltage": 248,
-    "charge_critical_voltage": 251,
-    "charge_maximum_soc": 95,
+    "charge_on_voltage": 249,
+    "charge_off_voltage": 247,
+    "charge_stabilization_seconds": 300,
+    "charge_minimum_state_seconds": 300,
+    "sunset_target_soc": 100,
+    "pv_available_on_w": 300,
+    "pv_available_off_w": 100,
+    "forecast_safety_kwh": 0.5,
     "shadow_mode": True,
     "entities": {
         "battery_soc": "sensor.ss_battery_soc",
@@ -58,10 +65,11 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.1 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.3 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
+        self.telemetry = TelemetryStore(TELEMETRY_PATH)
         self.last_error_signature = ""
 
     @staticmethod
@@ -151,6 +159,11 @@ class Runtime:
             }
 
         try:
+            next_setting = entities["sun"].get("attributes", {}).get("next_setting")
+            if not next_setting:
+                raise ValueError("sun.next_setting is missing")
+            sunset = datetime.fromisoformat(next_setting.replace("Z", "+00:00"))
+            hours_until_sunset = max((sunset - datetime.now(timezone.utc)).total_seconds() / 3600, 0)
             charge_decision = calculate_charge(
                 ChargeInputs(
                     battery_soc=self._number(entities["battery_soc"], "battery_soc"),
@@ -158,17 +171,24 @@ class Runtime:
                     grid_power_w=self._number(entities["grid_power"], "grid_power"),
                     pv_power_w=self._number(entities["pv_power"], "pv_power"),
                     grid_connected=entities["grid_connected"].get("state") == "on",
-                    sun_below_horizon=entities["sun"].get("state") == "below_horizon",
                     voltage_l1=self._number(entities["grid_voltage_l1"], "grid_voltage_l1"),
                     voltage_l2=self._number(entities["grid_voltage_l2"], "grid_voltage_l2"),
                     voltage_l3=self._number(entities["grid_voltage_l3"], "grid_voltage_l3"),
                     battery_temperature_c=self._number(entities["battery_temperature"], "battery_temperature"),
-                    warning_voltage=float(self.options["charge_warning_voltage"]),
-                    critical_voltage=float(self.options["charge_critical_voltage"]),
-                    maximum_soc=float(self.options["charge_maximum_soc"]),
+                    forecast_remaining_kwh=self._number(entities["forecast_today_remaining"], "forecast_today_remaining"),
+                    hours_until_sunset=hours_until_sunset,
+                    battery_capacity_kwh=float(self.options["battery_capacity_kwh"]),
+                    sunset_target_soc=float(self.options["sunset_target_soc"]),
+                    charge_on_voltage=float(self.options["charge_on_voltage"]),
+                    charge_off_voltage=float(self.options["charge_off_voltage"]),
+                    pv_available_on_w=float(self.options["pv_available_on_w"]),
+                    pv_available_off_w=float(self.options["pv_available_off_w"]),
+                    forecast_safety_kwh=float(self.options["forecast_safety_kwh"]),
                     enabled=bool(self.options["charge_optimizer_enabled"]),
-                )
+                ),
+                self.state.get("charge_shadow_request", "off"),
             )
+            self._apply_charge_stabilization(charge_decision)
         except (ValueError, KeyError) as exc:
             charge_decision = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -179,16 +199,19 @@ class Runtime:
                 "explanation": str(exc),
             }
 
+        self.telemetry.append(self._telemetry_record(entities, charge_decision))
+
         with self.lock:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.1",
+                "version": "0.2.3",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
                 "decision": decision,
                 "charge_decision": charge_decision,
+                "charge_telemetry": self.telemetry.latest(100),
                 "requested_mode": self.state.get("requested_mode", "auto"),
                 "logs": self.state.get("logs", []),
                 "diagnostics": self.diagnostics(),
@@ -206,12 +229,68 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.1",
+            "version": "0.2.3",
             "shadow": True,
             "supervisor_token_present": bool(self.client.token),
             "supervisor_token_source": self.client.token_source or "none",
             "home_assistant_api_url": self.client.base_url,
             "configured_entity_count": len(self.options.get("entities", {})),
+        }
+
+    def _apply_charge_stabilization(self, decision: dict) -> None:
+        desired = decision.get("desired_charge_request", "no_action")
+        current = self.state.get("charge_shadow_request", "off")
+        now = time.time()
+        transitioned = False
+        if desired == "no_action":
+            self.state.pop("charge_candidate_request", None)
+            self.state.pop("charge_candidate_since", None)
+        elif desired == current:
+            self.state.pop("charge_candidate_request", None)
+            self.state.pop("charge_candidate_since", None)
+        else:
+            if self.state.get("charge_candidate_request") != desired:
+                self.state["charge_candidate_request"] = desired
+                self.state["charge_candidate_since"] = now
+            candidate_elapsed = now - float(self.state.get("charge_candidate_since", now))
+            state_elapsed = now - float(self.state.get("charge_last_transition", 0))
+            if candidate_elapsed >= float(self.options["charge_stabilization_seconds"]) and state_elapsed >= float(self.options["charge_minimum_state_seconds"]):
+                current = desired
+                self.state["charge_shadow_request"] = current
+                self.state["charge_last_transition"] = now
+                self.state.pop("charge_candidate_request", None)
+                self.state.pop("charge_candidate_since", None)
+                transitioned = True
+                self.add_log(f"Shadow battery charge request changed to {current.upper()}: {decision.get('explanation', '')}")
+                self.save_state()
+        decision["recommended_charge_request"] = current
+        decision["transitioned"] = transitioned
+        decision["pending_request"] = self.state.get("charge_candidate_request")
+        decision["pending_seconds"] = round(max(now - float(self.state.get("charge_candidate_since", now)), 0)) if self.state.get("charge_candidate_request") else 0
+
+    @staticmethod
+    def _telemetry_record(entities: dict, decision: dict) -> dict:
+        def state(key: str):
+            return entities.get(key, {}).get("state")
+        return {
+            "timestamp": decision.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "request": decision.get("recommended_charge_request", "off"),
+            "desired": decision.get("desired_charge_request", "no_action"),
+            "state": decision.get("state", "blocked"),
+            "reason": decision.get("explanation", ""),
+            "transitioned": decision.get("transitioned", False),
+            "pv_w": state("pv_power"),
+            "battery_w": state("battery_power"),
+            "grid_w": state("grid_power"),
+            "battery_soc": state("battery_soc"),
+            "battery_temperature_c": state("battery_temperature"),
+            "voltage_l1": state("grid_voltage_l1"),
+            "voltage_l2": state("grid_voltage_l2"),
+            "voltage_l3": state("grid_voltage_l3"),
+            "maximum_voltage": decision.get("maximum_grid_voltage"),
+            "determining_phase": decision.get("determining_phase"),
+            "forecast_remaining_kwh": state("forecast_today_remaining"),
+            "projected_shortfall_kwh": decision.get("projected_sunset_shortfall_kwh"),
         }
 
     def set_mode(self, mode: str) -> None:
@@ -248,7 +327,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.1"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.3"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -289,7 +368,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.1 started with export and charge optimizers in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.3 started with binary charge requests and persistent telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],
