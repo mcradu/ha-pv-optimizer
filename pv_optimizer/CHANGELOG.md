@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Expose Supervisor API diagnostics without exposing the token.
+- Log connection failures once per distinct error.
+- Show entity-specific errors and runtime diagnostics in the Web UI.
+
 ## 0.1.0
 
 - Add Home Assistant app repository metadata.

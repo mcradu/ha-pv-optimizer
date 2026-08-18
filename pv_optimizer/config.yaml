@@ -1,5 +1,5 @@
 name: HA PV Optimizer
-version: "0.1.0"
+version: "0.1.1"
 slug: pv_optimizer
 description: Explainable PV battery-export optimization with an integrated Web UI
 url: https://github.com/mcradu/ha-pv-optimizer
