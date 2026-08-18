@@ -1,5 +1,5 @@
 name: HA PV Optimizer
-version: "0.1.1"
+version: "0.1.2"
 slug: pv_optimizer
 description: Explainable PV battery-export optimization with an integrated Web UI
 url: https://github.com/mcradu/ha-pv-optimizer
@@ -15,6 +15,8 @@ panel_icon: mdi:solar-power-variant
 panel_title: PV Optimizer
 panel_admin: true
 homeassistant_api: true
+hassio_api: true
+hassio_role: default
 watchdog: http://[HOST]:[PORT:8099]/api/health
 backup: hot
 stage: experimental

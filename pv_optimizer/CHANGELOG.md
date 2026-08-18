@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Request an explicit Supervisor API token in addition to Core API proxy access.
+- Accept the legacy `HASSIO_TOKEN` environment name as a compatibility fallback.
+- Report which token source is available without exposing token contents.
+
 ## 0.1.1
 
 - Expose Supervisor API diagnostics without exposing the token.

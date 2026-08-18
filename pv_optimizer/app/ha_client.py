@@ -10,7 +10,14 @@ from urllib.request import Request, urlopen
 class HomeAssistantClient:
     def __init__(self, base_url: str = "http://supervisor/core/api") -> None:
         self.base_url = base_url.rstrip("/")
+        self.token_source = ""
         self.token = os.getenv("SUPERVISOR_TOKEN", "")
+        if self.token:
+            self.token_source = "SUPERVISOR_TOKEN"
+        else:
+            self.token = os.getenv("HASSIO_TOKEN", "")
+            if self.token:
+                self.token_source = "HASSIO_TOKEN"
 
     def get_state(self, entity_id: str) -> dict:
         if not self.token:
