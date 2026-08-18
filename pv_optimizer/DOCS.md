@@ -1,4 +1,4 @@
-# HA PV Optimizer 0.2.0
+# HA PV Optimizer 0.2.1
 
 This release is a safe migration foundation for `pv_night_battery_export.yaml` V5.8.2.
 

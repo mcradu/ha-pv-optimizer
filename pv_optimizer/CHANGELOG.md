@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Collapse raw runtime diagnostics by default on the Entity Health page.
+
 ## 0.2.0
 
 - Add a separate shadow-only daytime charge optimizer.
