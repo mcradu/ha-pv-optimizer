@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Discover relevant Deye/Sunsynk `select`, `switch`, and `number` entities through the HA states API.
+- Display current state, supported options, and safe control attributes without writing to Home Assistant.
+
 ## 0.2.1
 
 - Collapse raw runtime diagnostics by default on the Entity Health page.

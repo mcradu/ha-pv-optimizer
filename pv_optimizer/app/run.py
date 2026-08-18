@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from engine import Inputs, calculate
 from charge_engine import ChargeInputs, calculate_charge
+from discovery import control_candidates
 from ha_client import HomeAssistantClient
 
 ROOT = Path(__file__).parent
@@ -58,11 +59,14 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.1 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.2 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
         self.last_error_signature = ""
+        self.control_candidates: list[dict] = []
+        self.discovery_error = ""
+        self.last_discovery_at = 0.0
 
     @staticmethod
     def _load_json(path: Path, fallback: dict) -> dict:
@@ -100,6 +104,13 @@ class Runtime:
         entities: dict[str, dict] = {}
         errors: list[str] = []
         mode = self.state.get("requested_mode", "auto")
+        if time.monotonic() - self.last_discovery_at >= 300 or not self.control_candidates:
+            try:
+                self.control_candidates = control_candidates(self.client.get_states())
+                self.discovery_error = ""
+            except RuntimeError as exc:
+                self.discovery_error = str(exc)
+            self.last_discovery_at = time.monotonic()
         for key, entity_id in entity_map.items():
             try:
                 entities[key] = self.client.get_state(entity_id)
@@ -183,12 +194,14 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.1",
+                "version": "0.2.2",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
                 "decision": decision,
                 "charge_decision": charge_decision,
+                "control_candidates": self.control_candidates,
+                "discovery_error": self.discovery_error,
                 "requested_mode": self.state.get("requested_mode", "auto"),
                 "logs": self.state.get("logs", []),
                 "diagnostics": self.diagnostics(),
@@ -206,7 +219,7 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.1",
+            "version": "0.2.2",
             "shadow": True,
             "supervisor_token_present": bool(self.client.token),
             "supervisor_token_source": self.client.token_source or "none",
@@ -248,7 +261,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.1"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.2"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -289,7 +302,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.1 started with export and charge optimizers in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.2 started with read-only inverter control discovery")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],
