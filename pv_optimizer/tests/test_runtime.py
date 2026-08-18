@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,15 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "app"))
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_old_options_gain_new_default_entities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            options = Path(directory) / "options.json"
+            options.write_text(json.dumps({"entities": {"battery_soc": "sensor.custom_soc"}}))
+            import run
+            loaded = run.Runtime._load_json(options, run.DEFAULTS)
+            self.assertEqual(loaded["entities"]["battery_soc"], "sensor.custom_soc")
+            self.assertEqual(loaded["entities"]["grid_voltage_l1"], "sensor.ss_grid_l1_voltage")
+
     def test_poll_without_supervisor_is_blocked_not_crashed(self):
         with tempfile.TemporaryDirectory() as directory:
             options = Path(directory) / "options.json"
