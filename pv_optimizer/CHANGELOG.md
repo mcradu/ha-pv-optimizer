@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Add a separate shadow-only daytime charge optimizer.
+- Use three-phase voltage, available PV export, SOC, battery power, and battery temperature.
+- Apply the configured temperature-dependent charging limits.
+- Add a dedicated Charging page to the Ingress UI.
+- Add Home Assistant add-on icon and logo assets.
+
 ## 0.1.4
 
 - Do not calculate or expose active night SOC thresholds during daytime.

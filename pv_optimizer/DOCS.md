@@ -1,6 +1,8 @@
-# HA PV Optimizer 0.1.4
+# HA PV Optimizer 0.2.0
 
 This release is a safe migration foundation for `pv_night_battery_export.yaml` V5.8.2.
+
+The Charging tab adds a separate shadow-only charge optimizer. It monitors all three grid voltages, battery temperature, SOC, PV production, battery power, and grid export. Recommendations never write to the inverter.
 
 ## Safety boundary
 

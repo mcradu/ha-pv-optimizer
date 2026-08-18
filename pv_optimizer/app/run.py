@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from engine import Inputs, calculate
+from charge_engine import ChargeInputs, calculate_charge
 from ha_client import HomeAssistantClient
 
 ROOT = Path(__file__).parent
@@ -30,6 +31,10 @@ DEFAULTS = {
     "night_max_w": 1200,
     "night_min_w": 200,
     "morning_max_w": 700,
+    "charge_optimizer_enabled": True,
+    "charge_warning_voltage": 248,
+    "charge_critical_voltage": 251,
+    "charge_maximum_soc": 95,
     "shadow_mode": True,
     "entities": {
         "battery_soc": "sensor.ss_battery_soc",
@@ -40,6 +45,10 @@ DEFAULTS = {
         "sun": "sun.sun",
         "forecast_tomorrow": "sensor.energy_production_tomorrow",
         "forecast_today_remaining": "sensor.energy_production_today_remaining",
+        "grid_voltage_l1": "sensor.ss_grid_l1_voltage",
+        "grid_voltage_l2": "sensor.ss_grid_l2_voltage",
+        "grid_voltage_l3": "sensor.ss_grid_l3_voltage",
+        "battery_temperature": "sensor.ss_battery_temperature",
     },
 }
 
@@ -49,7 +58,7 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.1.4 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.0 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -61,6 +70,8 @@ class Runtime:
             data = json.loads(path.read_text())
             merged = dict(fallback)
             merged.update(data)
+            if isinstance(fallback.get("entities"), dict) and isinstance(data.get("entities"), dict):
+                merged["entities"] = {**fallback["entities"], **data["entities"]}
             return merged
         except (FileNotFoundError, json.JSONDecodeError):
             return dict(fallback)
@@ -139,15 +150,45 @@ class Runtime:
                 "explanation": str(exc),
             }
 
+        try:
+            charge_decision = calculate_charge(
+                ChargeInputs(
+                    battery_soc=self._number(entities["battery_soc"], "battery_soc"),
+                    battery_power_w=self._number(entities["battery_power"], "battery_power"),
+                    grid_power_w=self._number(entities["grid_power"], "grid_power"),
+                    pv_power_w=self._number(entities["pv_power"], "pv_power"),
+                    grid_connected=entities["grid_connected"].get("state") == "on",
+                    sun_below_horizon=entities["sun"].get("state") == "below_horizon",
+                    voltage_l1=self._number(entities["grid_voltage_l1"], "grid_voltage_l1"),
+                    voltage_l2=self._number(entities["grid_voltage_l2"], "grid_voltage_l2"),
+                    voltage_l3=self._number(entities["grid_voltage_l3"], "grid_voltage_l3"),
+                    battery_temperature_c=self._number(entities["battery_temperature"], "battery_temperature"),
+                    warning_voltage=float(self.options["charge_warning_voltage"]),
+                    critical_voltage=float(self.options["charge_critical_voltage"]),
+                    maximum_soc=float(self.options["charge_maximum_soc"]),
+                    enabled=bool(self.options["charge_optimizer_enabled"]),
+                )
+            )
+        except (ValueError, KeyError) as exc:
+            charge_decision = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "state": "blocked",
+                "shadow": True,
+                "target_charge_w": 0,
+                "blockers": ["invalid_or_missing_charge_entity"],
+                "explanation": str(exc),
+            }
+
         with self.lock:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.1.4",
+                "version": "0.2.0",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
                 "decision": decision,
+                "charge_decision": charge_decision,
                 "requested_mode": self.state.get("requested_mode", "auto"),
                 "logs": self.state.get("logs", []),
                 "diagnostics": self.diagnostics(),
@@ -165,7 +206,7 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.1.4",
+            "version": "0.2.0",
             "shadow": True,
             "supervisor_token_present": bool(self.client.token),
             "supervisor_token_source": self.client.token_source or "none",
@@ -207,7 +248,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.1.4"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.0"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -248,7 +289,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.1.4 started in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.0 started with export and charge optimizers in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],
