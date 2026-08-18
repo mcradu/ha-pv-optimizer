@@ -6,7 +6,7 @@
 - Default to `home_assistant.one_year` and measurement `pv_optimizer_charge`.
 - Keep recent Web UI records in memory without maintaining a second local history.
 - Surface InfluxDB target and last write error in runtime diagnostics.
-- Add a repository issue board linking problems, causes, resolutions, releases, and PRs.
+- Keep project issue tracking outside the add-on repository in a dedicated companion repository.
 
 ## 0.2.3
 
