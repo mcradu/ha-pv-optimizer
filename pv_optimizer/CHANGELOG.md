@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5
+
+- Persist shadow night-injection decisions to `pv_optimizer_night_injection` in InfluxDB.
+- Show the latest night-injection samples in the Decision tab.
+- Add deduplicated night state, target, SOC threshold, mode, and blocker changes to Recent events.
+- Keep night injection and charging in mandatory shadow mode with independent diagnostics.
+
 ## 0.2.4
 
 - Replace local JSONL telemetry with direct InfluxDB 1.x line-protocol writes.

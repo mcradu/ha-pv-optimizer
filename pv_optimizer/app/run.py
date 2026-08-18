@@ -46,6 +46,7 @@ DEFAULTS = {
     "influxdb_database": "home_assistant",
     "influxdb_retention_policy": "one_year",
     "influxdb_measurement": "pv_optimizer_charge",
+    "influxdb_night_measurement": "pv_optimizer_night_injection",
     "influxdb_username": "",
     "influxdb_password": "",
     "shadow_mode": True,
@@ -76,6 +77,11 @@ class Runtime:
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
         self.telemetry = InfluxTelemetry(self.options)
+        self.night_telemetry = InfluxTelemetry(
+            self.options,
+            measurement_option="influxdb_night_measurement",
+            default_measurement="pv_optimizer_night_injection",
+        )
         self.last_error_signature = ""
 
     @staticmethod
@@ -206,19 +212,23 @@ class Runtime:
             }
 
         self.telemetry.append(self._telemetry_record(entities, charge_decision))
+        night_record = self._night_telemetry_record(entities, decision)
+        self.night_telemetry.append(night_record)
+        self._log_night_transition(night_record)
 
         with self.lock:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.4",
+                "version": "0.2.5",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
                 "decision": decision,
                 "charge_decision": charge_decision,
                 "charge_telemetry": self.telemetry.latest(100),
-                "telemetry_error": self.telemetry.last_error,
+                "night_telemetry": self.night_telemetry.latest(100),
+                "telemetry_error": self.telemetry.last_error or self.night_telemetry.last_error,
                 "requested_mode": self.state.get("requested_mode", "auto"),
                 "logs": self.state.get("logs", []),
                 "diagnostics": self.diagnostics(),
@@ -236,7 +246,7 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.4",
+            "version": "0.2.5",
             "shadow": True,
             "supervisor_token_present": bool(self.client.token),
             "supervisor_token_source": self.client.token_source or "none",
@@ -245,6 +255,8 @@ class Runtime:
             "influxdb_enabled": self.telemetry.enabled,
             "influxdb_target": f'{self.telemetry.database}.{self.telemetry.retention_policy}.{self.telemetry.measurement}',
             "influxdb_last_error": self.telemetry.last_error,
+            "influxdb_night_target": f'{self.night_telemetry.database}.{self.night_telemetry.retention_policy}.{self.night_telemetry.measurement}',
+            "influxdb_night_last_error": self.night_telemetry.last_error,
         }
 
     def _apply_charge_stabilization(self, decision: dict) -> None:
@@ -303,6 +315,51 @@ class Runtime:
             "projected_shortfall_kwh": decision.get("projected_sunset_shortfall_kwh"),
         }
 
+    @staticmethod
+    def _night_telemetry_record(entities: dict, decision: dict) -> dict:
+        def state(key: str):
+            return entities.get(key, {}).get("state")
+        return {
+            "timestamp": decision.get("timestamp", datetime.now(timezone.utc).isoformat()),
+            "request": "export" if decision.get("target_export_w", 0) > 0 else "stop",
+            "state": decision.get("state", "blocked"),
+            "mode": decision.get("applied_mode", "auto"),
+            "reason": decision.get("explanation", ""),
+            "blockers": decision.get("blockers", []),
+            "target_export_w": decision.get("target_export_w", 0),
+            "stop_soc": decision.get("stop_soc"),
+            "start_soc": decision.get("start_soc"),
+            "needed_until_sunrise_kwh": decision.get("needed_until_sunrise_kwh"),
+            "surplus_kwh": decision.get("surplus_kwh"),
+            "hours_until_sunrise": (decision.get("inputs") or {}).get("hours_until_sunrise"),
+            "night_load_w": (decision.get("inputs") or {}).get("night_load_w"),
+            "forecast_tomorrow_kwh": state("forecast_tomorrow"),
+            "pv_w": state("pv_power"),
+            "battery_w": state("battery_power"),
+            "grid_w": state("grid_power"),
+            "battery_soc": state("battery_soc"),
+            "grid_connected": state("grid_connected") == "on",
+        }
+
+    def _log_night_transition(self, record: dict) -> None:
+        signature = (
+            record.get("state"),
+            record.get("target_export_w"),
+            record.get("stop_soc"),
+            tuple(record.get("blockers", [])),
+            record.get("mode"),
+        )
+        signature_json = json.dumps(signature, separators=(",", ":"))
+        if self.state.get("night_event_signature") == signature_json:
+            return
+        self.state["night_event_signature"] = signature_json
+        self.add_log(
+            f"Shadow night injection {str(record.get('state', 'blocked')).upper()}: "
+            f"target {record.get('target_export_w', 0)} W, stop SOC {record.get('stop_soc')}, "
+            f"reason: {record.get('reason', '')}"
+        )
+        self.save_state()
+
     def set_mode(self, mode: str) -> None:
         if mode not in {"auto", "night_max", "stop", "day", "failsafe", "test_500"}:
             raise ValueError("unsupported mode")
@@ -337,7 +394,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.4"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.5"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -380,7 +437,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.4 started with binary charge requests and InfluxDB telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.5 started with parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],

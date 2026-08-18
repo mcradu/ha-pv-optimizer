@@ -40,6 +40,24 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(client.token, "test-token")
             self.assertEqual(client.token_source, "HASSIO_TOKEN")
 
+    def test_night_events_are_deduplicated(self):
+        import run
+        runtime = object.__new__(run.Runtime)
+        runtime.state = {"logs": []}
+        runtime.add_log = lambda message: runtime.state["logs"].append(message)
+        runtime.save_state = lambda: None
+        record = {
+            "state": "exporting_shadow",
+            "target_export_w": 1200,
+            "stop_soc": 60,
+            "blockers": [],
+            "mode": "auto",
+            "reason": "night surplus",
+        }
+        runtime._log_night_transition(record)
+        runtime._log_night_transition(record)
+        self.assertEqual(len(runtime.state["logs"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

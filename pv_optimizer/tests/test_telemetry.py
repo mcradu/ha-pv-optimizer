@@ -51,6 +51,28 @@ class TelemetryTests(unittest.TestCase):
             self.assertIn("InfluxDB connection failed", store.last_error)
             self.assertEqual(store.latest(1)[0]["request"], "off")
 
+    def test_night_measurement_and_fields(self):
+        response = MagicMock()
+        response.status = 204
+        response.__enter__.return_value = response
+        options = {**OPTIONS, "influxdb_night_measurement": "pv_optimizer_night_injection"}
+        with patch("telemetry.urlopen", return_value=response) as mocked:
+            store = InfluxTelemetry(options, measurement_option="influxdb_night_measurement", default_measurement="pv_optimizer_night_injection")
+            store.append({
+                "timestamp": "2026-08-18T20:00:00+00:00",
+                "request": "export",
+                "state": "exporting_shadow",
+                "mode": "auto",
+                "target_export_w": 1200,
+                "stop_soc": 60,
+                "blockers": [],
+                "reason": "night surplus",
+            })
+            body = mocked.call_args.args[0].data.decode()
+            self.assertTrue(body.startswith("pv_optimizer_night_injection,"))
+            self.assertIn("target_export_w=1200.0", body)
+            self.assertIn("stop_soc=60.0", body)
+
 
 if __name__ == "__main__":
     unittest.main()

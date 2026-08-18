@@ -10,12 +10,12 @@ from urllib.request import Request, urlopen
 
 
 class InfluxTelemetry:
-    def __init__(self, options: dict[str, Any], recent_limit: int = 500) -> None:
+    def __init__(self, options: dict[str, Any], recent_limit: int = 500, measurement_option: str = "influxdb_measurement", default_measurement: str = "pv_optimizer_charge") -> None:
         self.enabled = bool(options.get("influxdb_enabled", True))
         self.url = str(options.get("influxdb_url", "")).rstrip("/")
         self.database = str(options.get("influxdb_database", "home_assistant"))
         self.retention_policy = str(options.get("influxdb_retention_policy", "one_year"))
-        self.measurement = str(options.get("influxdb_measurement", "pv_optimizer_charge"))
+        self.measurement = str(options.get(measurement_option, default_measurement))
         self.username = str(options.get("influxdb_username", ""))
         self.password = str(options.get("influxdb_password", ""))
         self.recent = deque(maxlen=recent_limit)
@@ -38,20 +38,13 @@ class InfluxTelemetry:
     def _write(self, record: dict[str, Any]) -> None:
         if not self.url:
             raise RuntimeError("InfluxDB URL is missing")
-        tags = {
-            "request": record.get("request", "off"),
-            "desired": record.get("desired", "no_action"),
-            "state": record.get("state", "blocked"),
-            "determining_phase": record.get("determining_phase", "none"),
-            "shadow": "true",
-        }
-        field_names = (
-            "pv_w", "battery_w", "grid_w", "battery_soc", "battery_temperature_c",
-            "voltage_l1", "voltage_l2", "voltage_l3", "maximum_voltage",
-            "forecast_remaining_kwh", "projected_shortfall_kwh", "transitioned",
-        )
-        fields = {key: record.get(key) for key in field_names}
+        tag_names = ("request", "desired", "state", "determining_phase", "mode", "shadow")
+        tags = {key: record[key] for key in tag_names if record.get(key) not in (None, "")}
+        tags.setdefault("shadow", "true")
+        excluded = {"timestamp", "reason", "blockers", *tag_names}
+        fields = {key: value for key, value in record.items() if key not in excluded}
         fields["reason"] = record.get("reason", "")
+        fields["blockers"] = ",".join(record.get("blockers", []))
         line = _line_protocol(self.measurement, tags, fields, record.get("timestamp"))
         query = urlencode({"db": self.database, "rp": self.retention_policy, "precision": "ns"})
         headers = {"Content-Type": "text/plain; charset=utf-8"}
