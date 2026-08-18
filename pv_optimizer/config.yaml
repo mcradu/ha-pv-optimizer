@@ -1,0 +1,60 @@
+name: HA PV Optimizer
+version: "0.1.0"
+slug: pv_optimizer
+description: Explainable PV battery-export optimization with an integrated Web UI
+url: https://github.com/mcradu/ha-pv-optimizer
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:solar-power-variant
+panel_title: PV Optimizer
+panel_admin: true
+homeassistant_api: true
+watchdog: http://[HOST]:[PORT:8099]/api/health
+backup: hot
+stage: experimental
+options:
+  poll_interval_seconds: 30
+  battery_capacity_kwh: 20
+  minimum_morning_soc: 45
+  safety_margin_soc: 3
+  hysteresis_soc: 5
+  static_night_load_w: 800
+  night_max_w: 1200
+  night_min_w: 200
+  morning_max_w: 700
+  shadow_mode: true
+  entities:
+    battery_soc: sensor.ss_battery_soc
+    pv_power: sensor.ss_pv_power
+    battery_power: sensor.ss_battery_power
+    grid_power: sensor.ss_grid_power
+    grid_connected: binary_sensor.ss_grid_connected
+    sun: sun.sun
+    forecast_tomorrow: sensor.energy_production_tomorrow
+    forecast_today_remaining: sensor.energy_production_today_remaining
+schema:
+  poll_interval_seconds: int(5,300)
+  battery_capacity_kwh: float(1,200)
+  minimum_morning_soc: float(5,95)
+  safety_margin_soc: float(0,20)
+  hysteresis_soc: float(1,20)
+  static_night_load_w: int(0,10000)
+  night_max_w: int(0,10000)
+  night_min_w: int(0,5000)
+  morning_max_w: int(0,5000)
+  shadow_mode: bool
+  entities:
+    battery_soc: str
+    pv_power: str
+    battery_power: str
+    grid_power: str
+    grid_connected: str
+    sun: str
+    forecast_tomorrow: str
+    forecast_today_remaining: str
