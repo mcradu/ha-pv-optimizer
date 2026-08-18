@@ -23,6 +23,13 @@ class RuntimeTests(unittest.TestCase):
                     self.assertTrue(runtime.status["errors"])
                     self.assertFalse(runtime.status["diagnostics"]["supervisor_token_present"])
 
+    def test_legacy_hassio_token_is_supported(self):
+        with patch.dict(os.environ, {"HASSIO_TOKEN": "test-token"}, clear=True):
+            import ha_client
+            client = ha_client.HomeAssistantClient()
+            self.assertEqual(client.token, "test-token")
+            self.assertEqual(client.token_source, "HASSIO_TOKEN")
+
 
 if __name__ == "__main__":
     unittest.main()

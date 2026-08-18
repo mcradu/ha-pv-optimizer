@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -50,7 +49,7 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.1.1 requires shadow_mode=true")
+            raise RuntimeError("Version 0.1.2 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -144,7 +143,7 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.1.1",
+                "version": "0.1.2",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
@@ -166,9 +165,10 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.1.1",
+            "version": "0.1.2",
             "shadow": True,
-            "supervisor_token_present": bool(os.getenv("SUPERVISOR_TOKEN")),
+            "supervisor_token_present": bool(self.client.token),
+            "supervisor_token_source": self.client.token_source or "none",
             "home_assistant_api_url": self.client.base_url,
             "configured_entity_count": len(self.options.get("entities", {})),
         }
@@ -207,7 +207,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.1.1"})
+            self._json({"status": "ok", "shadow": True, "version": "0.1.2"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -248,7 +248,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.1.1 started in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.1.2 started in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],
