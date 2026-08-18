@@ -28,6 +28,28 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 
 def calculate(values: Inputs, requested_mode: str = "auto") -> dict[str, Any]:
+    if not values.sun_below_horizon:
+        blockers = ["outside_night_window"]
+        if not values.enabled:
+            blockers.insert(0, "optimizer_disabled")
+        if not values.grid_connected:
+            blockers.insert(0, "grid_disconnected")
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "state": "blocked",
+            "shadow": True,
+            "requested_mode": requested_mode,
+            "applied_mode": requested_mode,
+            "target_export_w": 0,
+            "stop_soc": None,
+            "start_soc": None,
+            "needed_until_sunrise_kwh": None,
+            "surplus_kwh": None,
+            "blockers": blockers,
+            "inputs": asdict(values),
+            "explanation": "No battery export: outside the night window.",
+        }
+
     needed_kwh = max(values.hours_until_sunrise, 0) * max(values.night_load_w, 0) / 1000
     needed_soc = needed_kwh / max(values.battery_capacity_kwh, 0.1) * 100
     stop_soc = round(_clamp(values.minimum_morning_soc + needed_soc + values.safety_margin_soc, 20, 100))
@@ -39,8 +61,6 @@ def calculate(values: Inputs, requested_mode: str = "auto") -> dict[str, Any]:
         blockers.append("optimizer_disabled")
     if not values.grid_connected:
         blockers.append("grid_disconnected")
-    if not values.sun_below_horizon:
-        blockers.append("outside_night_window")
     if values.battery_soc <= stop_soc:
         blockers.append("stop_soc_reached")
     if values.hours_until_sunrise <= 0:

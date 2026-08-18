@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+- Do not calculate or expose active night SOC thresholds during daytime.
+- Suppress the misleading `stop_soc_reached` blocker outside the night window.
+- Replace raw JSON as the primary Decision view with a readable summary.
+- Improve horizontal tab navigation and compact mobile layouts.
+
 ## 0.1.3
 
 - Start Python through S6 `with-contenv` so Supervisor variables reach the process.
