@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.4
+
+- Replace local JSONL telemetry with direct InfluxDB 1.x line-protocol writes.
+- Default to `home_assistant.one_year` and measurement `pv_optimizer_charge`.
+- Keep recent Web UI records in memory without maintaining a second local history.
+- Surface InfluxDB target and last write error in runtime diagnostics.
+- Keep project issue tracking outside the add-on repository in a dedicated companion repository.
+
 ## 0.2.3
 
 - Replace charging-power recommendations with binary `ON`, `OFF`, and `NO ACTION` shadow requests.
