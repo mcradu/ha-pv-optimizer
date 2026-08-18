@@ -1,24 +1,55 @@
-import tempfile
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+from urllib.error import URLError
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "app"))
-from telemetry import TelemetryStore
+from telemetry import InfluxTelemetry, _line_protocol
+
+
+OPTIONS = {
+    "influxdb_enabled": True,
+    "influxdb_url": "http://influxdb:8086",
+    "influxdb_database": "home_assistant",
+    "influxdb_retention_policy": "one_year",
+    "influxdb_measurement": "pv_optimizer_charge",
+    "influxdb_username": "",
+    "influxdb_password": "",
+}
 
 
 class TelemetryTests(unittest.TestCase):
-    def test_persists_and_reloads_recent_records(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "telemetry.jsonl"
-            store = TelemetryStore(path, recent_limit=2)
-            store.append({"timestamp": "one", "request": "off"})
-            store.append({"timestamp": "two", "request": "on"})
-            reloaded = TelemetryStore(path, recent_limit=2)
-            self.assertEqual(reloaded.latest(), [
-                {"timestamp": "one", "request": "off"},
-                {"timestamp": "two", "request": "on"},
-            ])
+    def test_line_protocol_contains_tags_fields_and_timestamp(self):
+        line = _line_protocol(
+            "pv_optimizer_charge",
+            {"request": "on", "state": "charge grid"},
+            {"voltage_l1": "249.3", "transitioned": True, "reason": "high voltage"},
+            "2026-08-18T12:00:00+00:00",
+        )
+        self.assertIn("request=on", line)
+        self.assertIn("state=charge\\ grid", line)
+        self.assertIn("voltage_l1=249.3", line)
+        self.assertIn('reason="high voltage"', line)
+
+    def test_successful_write_keeps_recent_memory(self):
+        response = MagicMock()
+        response.status = 204
+        response.__enter__.return_value = response
+        with patch("telemetry.urlopen", return_value=response) as mocked:
+            store = InfluxTelemetry(OPTIONS)
+            store.append({"timestamp": "2026-08-18T12:00:00+00:00", "request": "off", "state": "export_preferred", "pv_w": 3000})
+            self.assertEqual(store.latest(1)[0]["request"], "off")
+            self.assertEqual(store.last_error, "")
+            self.assertIn("db=home_assistant", mocked.call_args.args[0].full_url)
+            self.assertIn("rp=one_year", mocked.call_args.args[0].full_url)
+
+    def test_write_failure_does_not_raise(self):
+        with patch("telemetry.urlopen", side_effect=URLError("offline")):
+            store = InfluxTelemetry(OPTIONS)
+            store.append({"timestamp": "2026-08-18T12:00:00+00:00", "request": "off", "pv_w": 0})
+            self.assertIn("InfluxDB connection failed", store.last_error)
+            self.assertEqual(store.latest(1)[0]["request"], "off")
 
 
 if __name__ == "__main__":

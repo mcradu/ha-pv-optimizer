@@ -13,12 +13,11 @@ from urllib.parse import urlparse
 from engine import Inputs, calculate
 from charge_engine import ChargeInputs, calculate_charge
 from ha_client import HomeAssistantClient
-from telemetry import TelemetryStore
+from telemetry import InfluxTelemetry
 
 ROOT = Path(__file__).parent
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/pv_optimizer_state.json")
-TELEMETRY_PATH = Path("/data/pv_optimizer_charge_telemetry.jsonl")
 LOG = logging.getLogger("pv_optimizer")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -42,6 +41,13 @@ DEFAULTS = {
     "pv_available_on_w": 300,
     "pv_available_off_w": 100,
     "forecast_safety_kwh": 0.5,
+    "influxdb_enabled": True,
+    "influxdb_url": "http://a0d7b954-influxdb:8086",
+    "influxdb_database": "home_assistant",
+    "influxdb_retention_policy": "one_year",
+    "influxdb_measurement": "pv_optimizer_charge",
+    "influxdb_username": "",
+    "influxdb_password": "",
     "shadow_mode": True,
     "entities": {
         "battery_soc": "sensor.ss_battery_soc",
@@ -65,11 +71,11 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.3 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.4 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
-        self.telemetry = TelemetryStore(TELEMETRY_PATH)
+        self.telemetry = InfluxTelemetry(self.options)
         self.last_error_signature = ""
 
     @staticmethod
@@ -205,13 +211,14 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.3",
+                "version": "0.2.4",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
                 "decision": decision,
                 "charge_decision": charge_decision,
                 "charge_telemetry": self.telemetry.latest(100),
+                "telemetry_error": self.telemetry.last_error,
                 "requested_mode": self.state.get("requested_mode", "auto"),
                 "logs": self.state.get("logs", []),
                 "diagnostics": self.diagnostics(),
@@ -229,12 +236,15 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.3",
+            "version": "0.2.4",
             "shadow": True,
             "supervisor_token_present": bool(self.client.token),
             "supervisor_token_source": self.client.token_source or "none",
             "home_assistant_api_url": self.client.base_url,
             "configured_entity_count": len(self.options.get("entities", {})),
+            "influxdb_enabled": self.telemetry.enabled,
+            "influxdb_target": f'{self.telemetry.database}.{self.telemetry.retention_policy}.{self.telemetry.measurement}',
+            "influxdb_last_error": self.telemetry.last_error,
         }
 
     def _apply_charge_stabilization(self, decision: dict) -> None:
@@ -327,12 +337,14 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.3"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.4"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
         elif path == "/api/config":
             safe = dict(RUNTIME.options)
+            if safe.get("influxdb_password"):
+                safe["influxdb_password"] = "********"
             self._json(safe)
         elif path == "/api/diagnostics":
             self._json(RUNTIME.diagnostics())
@@ -368,7 +380,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.3 started with binary charge requests and persistent telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.4 started with binary charge requests and InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],

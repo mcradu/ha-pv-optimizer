@@ -1,5 +1,5 @@
 name: HA PV Optimizer
-version: "0.2.3"
+version: "0.2.4"
 slug: pv_optimizer
 description: Explainable PV battery-export optimization with an integrated Web UI
 url: https://github.com/mcradu/ha-pv-optimizer
@@ -37,6 +37,13 @@ options:
   pv_available_on_w: 300
   pv_available_off_w: 100
   forecast_safety_kwh: 0.5
+  influxdb_enabled: true
+  influxdb_url: http://a0d7b954-influxdb:8086
+  influxdb_database: home_assistant
+  influxdb_retention_policy: one_year
+  influxdb_measurement: pv_optimizer_charge
+  influxdb_username: ""
+  influxdb_password: ""
   shadow_mode: true
   entities:
     battery_soc: sensor.ss_battery_soc
@@ -70,6 +77,13 @@ schema:
   pv_available_on_w: int(0,5000)
   pv_available_off_w: int(0,5000)
   forecast_safety_kwh: float(0,20)
+  influxdb_enabled: bool
+  influxdb_url: str
+  influxdb_database: str
+  influxdb_retention_policy: str
+  influxdb_measurement: str
+  influxdb_username: str
+  influxdb_password: password
   shadow_mode: bool
   entities:
     battery_soc: str
