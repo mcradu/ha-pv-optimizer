@@ -18,10 +18,11 @@ from influx import InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
+PORTAL_MAX_CHUNK_DAYS = 31
 LOG = logging.getLogger("reteleelectrice_collector")
 
 DEFAULTS: dict[str, Any] = {
@@ -94,7 +95,7 @@ def selected_pods(portal: ReteleElectricePortal, pod_option: str) -> list[str]:
     return portal.get_pods()
 
 
-def chunk_dates(start: date, end: date, maximum_days: int = 365):
+def chunk_dates(start: date, end: date, maximum_days: int = PORTAL_MAX_CHUNK_DAYS):
     cursor = start
     while cursor <= end:
         chunk_end = min(cursor + timedelta(days=maximum_days - 1), end)
@@ -102,13 +103,22 @@ def chunk_dates(start: date, end: date, maximum_days: int = 365):
         cursor = chunk_end + timedelta(days=1)
 
 
-def sync_once(options: dict[str, Any]) -> dict[str, Any]:
-    state = load_json(STATE_PATH, {})
+def sync_window(options: dict[str, Any], state: dict[str, Any], today: date) -> tuple[date, date, str]:
     first_backfill = not bool(state.get("backfill_complete"))
     days = options["backfill_days"] if first_backfill else options["rolling_days"]
-    today = datetime.now(ZoneInfo(str(options["timezone"]))).date()
-    start = today - timedelta(days=days - 1)
+
+    # The portal UI itself clamps curve downloads to the latest completed day.
+    # Asking FindOutMeterLoadData for the current date can produce an HTTP 500.
+    end = today - timedelta(days=1)
+    start = end - timedelta(days=days - 1)
     mode = "backfill" if first_backfill else "rolling"
+    return start, end, mode
+
+
+def sync_once(options: dict[str, Any]) -> dict[str, Any]:
+    state = load_json(STATE_PATH, {})
+    today = datetime.now(ZoneInfo(str(options["timezone"]))).date()
+    start, end, mode = sync_window(options, state, today)
 
     portal = ReteleElectricePortal(options["username"], options["password"])
     influx = InfluxWriter(
@@ -127,11 +137,11 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
         influx.ping()
         portal.login()
         pods = selected_pods(portal, str(options.get("pod", "")))
-        LOG.info("Sync mode=%s, pods=%d, range=%s..%s", mode, len(pods), start, today)
+        LOG.info("Sync mode=%s, pods=%d, range=%s..%s", mode, len(pods), start, end)
 
         for pod in pods:
             cnp, cui = portal.get_pod_identity(pod)
-            for chunk_start, chunk_end in chunk_dates(start, today):
+            for chunk_start, chunk_end in chunk_dates(start, end):
                 payload = portal.get_load_curves(pod, cnp, cui, chunk_start, chunk_end)
                 total_records += len(payload.get("ListData") or [])
                 points = normalize_curve_payload(
@@ -162,7 +172,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
             "last_success": now,
             "last_mode": mode,
             "last_start": start.isoformat(),
-            "last_end": today.isoformat(),
+            "last_end": end.isoformat(),
             "last_points_written": total_written,
         }
     )
@@ -188,6 +198,8 @@ def safe_status(options: dict[str, Any]) -> dict[str, Any]:
     data["rolling_days"] = options["rolling_days"]
     data["backfill_days"] = options["backfill_days"]
     data["interval_timestamp"] = options["interval_timestamp"]
+    data["portal_chunk_days"] = PORTAL_MAX_CHUNK_DAYS
+    data["latest_day_policy"] = "yesterday"
     return data
 
 
