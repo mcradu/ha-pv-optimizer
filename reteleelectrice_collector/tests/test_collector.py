@@ -1,7 +1,7 @@
 import json
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1] / "app"
@@ -10,6 +10,7 @@ sys.path.insert(0, str(APP))
 from influx import point_to_line
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, parse_a4j_response
+from run import chunk_dates, sync_window
 
 
 class ParserTests(unittest.TestCase):
@@ -38,6 +39,29 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(
             ReteleElectricePortal._extract_pod_values(value), {"RO00TESTPOD123456"}
         )
+
+
+class SchedulingTests(unittest.TestCase):
+    def test_backfill_ends_yesterday(self):
+        options = {"backfill_days": 365, "rolling_days": 7}
+        start, end, mode = sync_window(options, {}, date(2026, 8, 28))
+        self.assertEqual(end, date(2026, 8, 27))
+        self.assertEqual(start, date(2025, 8, 28))
+        self.assertEqual(mode, "backfill")
+
+    def test_rolling_window_ends_yesterday(self):
+        options = {"backfill_days": 365, "rolling_days": 7}
+        start, end, mode = sync_window(
+            options, {"backfill_complete": True}, date(2026, 8, 28)
+        )
+        self.assertEqual((start, end), (date(2026, 8, 21), date(2026, 8, 27)))
+        self.assertEqual(mode, "rolling")
+
+    def test_portal_chunks_are_at_most_31_days(self):
+        chunks = list(chunk_dates(date(2026, 1, 1), date(2026, 3, 10)))
+        self.assertEqual(chunks[0], (date(2026, 1, 1), date(2026, 1, 31)))
+        self.assertTrue(all((end - start).days + 1 <= 31 for start, end in chunks))
+        self.assertEqual(chunks[-1][1], date(2026, 3, 10))
 
 
 class NormalizationTests(unittest.TestCase):
