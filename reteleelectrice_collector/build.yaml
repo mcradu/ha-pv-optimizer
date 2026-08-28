@@ -1,0 +1,7 @@
+build_from:
+  amd64: ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.22
+  aarch64: ghcr.io/home-assistant/aarch64-base-python:3.13-alpine3.22
+labels:
+  org.opencontainers.image.title: Rețele Electrice Collector
+  org.opencontainers.image.description: Official 15-minute grid import/export data collector for Home Assistant
+  org.opencontainers.image.source: https://github.com/mcradu/ha-pv-optimizer
