@@ -32,9 +32,11 @@ Set the InfluxDB username and password if the local instance requires authentica
 
 ## Synchronization
 
-On the first successful run, the app backfills `backfill_days` (default 365). The portal request limit is handled in chunks of at most 365 days.
+On the first successful run, the app backfills `backfill_days` (default 365). For reliability the history is requested from the portal in chunks of at most 31 days.
 
-After the first successful backfill, every run re-reads the latest `rolling_days` (default 7). Writes are idempotent because InfluxDB uses the same measurement, tags, and timestamp for the same interval. This rolling window also handles delayed publication or corrections by the distributor.
+The portal UI treats the current calendar day as incomplete and clamps downloads to the previous day. The collector follows the same rule: every automatic or manual sync ends at **yesterday** in the configured timezone. This avoids requesting an incomplete day from `FindOutMeterLoadData`, which can return HTTP 500.
+
+After the first successful backfill, every run re-reads the latest `rolling_days` completed days (default 7). Writes are idempotent because InfluxDB uses the same measurement, tags, and timestamp for the same interval. This rolling window also handles delayed publication or corrections by the distributor.
 
 A manual sync can be triggered from the Ingress page.
 

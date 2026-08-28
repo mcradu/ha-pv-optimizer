@@ -4,7 +4,6 @@ import html as html_lib
 import json
 import logging
 import re
-import time
 import uuid
 from datetime import date
 from typing import Any
@@ -57,7 +56,9 @@ class ReteleElectricePortal:
             read=3,
             backoff_factor=1.0,
             status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=frozenset({"GET", "POST"}),
+            # Business POSTs are not retried on HTTP 5xx. A repeated
+            # FindOutMeterLoadData call only hides the useful first failure.
+            allowed_methods=frozenset({"GET"}),
         )
         self.session.mount("https://", HTTPAdapter(max_retries=retry))
         self.aura_token: str | None = None
@@ -295,7 +296,11 @@ class ReteleElectricePortal:
             },
             timeout=max(self.timeout, 60),
         )
-        post_response.raise_for_status()
+        if post_response.status_code >= 400:
+            raise PortalError(
+                f"Visualforce {method_name} returned HTTP {post_response.status_code} "
+                f"for range {method_params[3]}..{method_params[4]}"
+            )
         return parse_a4j_response(post_response.text)
 
     def _extract_aura_token(self, community_html: str) -> str | None:
