@@ -18,6 +18,7 @@ class RuntimeTests(unittest.TestCase):
             loaded = run.Runtime._load_json(options, run.DEFAULTS)
             self.assertEqual(loaded["entities"]["battery_soc"], "sensor.custom_soc")
             self.assertEqual(loaded["entities"]["grid_voltage_l1"], "sensor.ss_grid_l1_voltage")
+            self.assertEqual(loaded["export_price_ron_per_kwh"], 0.11)
 
     def test_poll_without_supervisor_is_blocked_not_crashed(self):
         with tempfile.TemporaryDirectory() as directory:

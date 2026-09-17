@@ -6,7 +6,7 @@ Home Assistant OS app repository for PV optimization and official grid-meter dat
 
 ### HA PV Optimizer
 
-`pv_optimizer/` is the safe, explainable PV battery-export optimizer. Version `0.2.5` runs charge and night-injection logic in mandatory shadow mode, exposes an Ingress Web UI, and writes diagnostic telemetry to InfluxDB.
+`pv_optimizer/` is the safe, explainable PV battery-export optimizer. Version `0.2.6` runs charge and night-injection logic in mandatory shadow mode, exposes an Ingress Web UI, supports a configurable flat export price, and writes diagnostic telemetry to InfluxDB.
 
 See [pv_optimizer/DOCS.md](pv_optimizer/DOCS.md) for configuration and safety details.
 

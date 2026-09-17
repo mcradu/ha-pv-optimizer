@@ -1,10 +1,12 @@
-# HA PV Optimizer 0.2.4
+# HA PV Optimizer 0.2.6
 
 This release is a safe migration foundation for `pv_night_battery_export.yaml` V5.8.2.
 
 The Charging tab models the battery as a flexible PV-only consumer and produces stabilized shadow requests: `ON`, `OFF`, or `NO ACTION`. It monitors all three grid voltages, battery temperature, SOC, PV production, grid export, remaining forecast, and the projected sunset energy shortfall. It never sets charging power and never writes to the inverter.
 
 The Decision tab shows the current shadow night-injection decision and the latest in-memory samples. The same samples are stored in InfluxDB under `pv_optimizer_night_injection`; charging remains in `pv_optimizer_charge`. Recent events record only meaningful night-decision changes, while InfluxDB receives every evaluation cycle.
+
+`export_price_ron_per_kwh` sets the flat export/injection price in RON/kWh from the app Configuration UI. The default is `0.11`. The optimizer uses it to calculate and display the estimated value of exportable battery surplus and stores both the price and value with night-injection telemetry. Changing the price does not alter the energy-reserve or export-power rules.
 
 Charge evaluations and transitions are written to InfluxDB measurement `pv_optimizer_charge`. The default target is `home_assistant.one_year`; URL and credentials are configured in the add-on options. The most recent records remain in memory only for the Web UI.
 

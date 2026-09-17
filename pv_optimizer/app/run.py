@@ -32,6 +32,7 @@ DEFAULTS = {
     "night_max_w": 1200,
     "night_min_w": 200,
     "morning_max_w": 700,
+    "export_price_ron_per_kwh": 0.11,
     "charge_optimizer_enabled": True,
     "charge_on_voltage": 249,
     "charge_off_voltage": 247,
@@ -72,7 +73,7 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.4 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.6 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -155,6 +156,7 @@ class Runtime:
                     night_load_w=float(self.options["static_night_load_w"]),
                     night_min_w=int(self.options["night_min_w"]),
                     night_max_w=int(self.options["night_max_w"]),
+                    export_price_ron_per_kwh=float(self.options["export_price_ron_per_kwh"]),
                     enabled=True,
                 ),
                 mode,
@@ -220,7 +222,7 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.5",
+                "version": "0.2.6",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
@@ -246,8 +248,9 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.5",
+            "version": "0.2.6",
             "shadow": True,
+            "export_price_ron_per_kwh": float(self.options["export_price_ron_per_kwh"]),
             "supervisor_token_present": bool(self.client.token),
             "supervisor_token_source": self.client.token_source or "none",
             "home_assistant_api_url": self.client.base_url,
@@ -331,6 +334,8 @@ class Runtime:
             "start_soc": decision.get("start_soc"),
             "needed_until_sunrise_kwh": decision.get("needed_until_sunrise_kwh"),
             "surplus_kwh": decision.get("surplus_kwh"),
+            "export_price_ron_per_kwh": decision.get("export_price_ron_per_kwh"),
+            "exportable_surplus_value_ron": decision.get("exportable_surplus_value_ron"),
             "hours_until_sunrise": (decision.get("inputs") or {}).get("hours_until_sunrise"),
             "night_load_w": (decision.get("inputs") or {}).get("night_load_w"),
             "forecast_tomorrow_kwh": state("forecast_tomorrow"),
@@ -394,7 +399,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.5"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.6"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -437,7 +442,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.5 started with parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.6 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],

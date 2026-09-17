@@ -1,0 +1,4 @@
+configuration:
+  export_price_ron_per_kwh:
+    name: Export energy price
+    description: Flat injection price in RON/kWh, used to value the exportable battery surplus.
