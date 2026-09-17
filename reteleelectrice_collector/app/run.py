@@ -14,15 +14,19 @@ from typing import Any
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
+import requests
+
 from influx import InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
 PORTAL_MAX_CHUNK_DAYS = 31
+HA_API_URL = "http://supervisor/core/api/services/persistent_notification"
+STALE_NOTIFICATION_ID = "reteleelectrice_collector_data_stale"
 LOG = logging.getLogger("reteleelectrice_collector")
 
 DEFAULTS: dict[str, Any] = {
@@ -35,12 +39,13 @@ DEFAULTS: dict[str, Any] = {
     "timezone": "Europe/Bucharest",
     "interval_timestamp": "start",
     "include_reactive": False,
-    "influxdb_url": "http://a0d7b954-influxdb:8086",
+    "influxdb_url": "http://192.168.0.10:8086",
     "influxdb_database": "home_assistant",
     "influxdb_retention_policy": "one_year",
     "influxdb_measurement": "reteleelectrice_meter_15m",
     "influxdb_username": "",
     "influxdb_password": "",
+    "stale_after_days": 5,
 }
 
 STATUS_LOCK = threading.Lock()
@@ -56,6 +61,9 @@ RUNTIME: dict[str, Any] = {
     "pods": [],
     "points_written": 0,
     "records_received": 0,
+    "latest_data_timestamp": None,
+    "data_age_days": None,
+    "data_fresh": None,
 }
 
 
@@ -83,9 +91,78 @@ def load_options() -> dict[str, Any]:
     options["sync_interval_minutes"] = max(60, int(options["sync_interval_minutes"]))
     options["rolling_days"] = max(1, int(options["rolling_days"]))
     options["backfill_days"] = max(1, min(1095, int(options["backfill_days"])))
+    options["stale_after_days"] = max(1, min(30, int(options["stale_after_days"])))
     if options["interval_timestamp"] not in {"start", "end"}:
         raise ValueError("interval_timestamp must be 'start' or 'end'")
     return options
+
+
+def data_freshness(
+    latest_timestamp: str | None,
+    stale_after_days: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    if not latest_timestamp:
+        return {"latest_data_timestamp": None, "data_age_days": None, "data_fresh": False}
+    latest = datetime.fromisoformat(latest_timestamp.replace("Z", "+00:00"))
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    current = now or utc_now()
+    age_seconds = max(0.0, (current - latest.astimezone(timezone.utc)).total_seconds())
+    return {
+        "latest_data_timestamp": latest.astimezone(timezone.utc).isoformat(),
+        "data_age_days": round(age_seconds / 86400, 2),
+        "data_fresh": age_seconds <= stale_after_days * 86400,
+    }
+
+
+def call_persistent_notification(service: str, payload: dict[str, Any]) -> bool:
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        LOG.warning("SUPERVISOR_TOKEN is unavailable; Home Assistant notification skipped")
+        return False
+    try:
+        response = requests.post(
+            f"{HA_API_URL}/{service}",
+            headers={"Authorization": f"Bearer {token}"},
+            json=payload,
+            timeout=10,
+        )
+        if response.status_code not in (200, 201):
+            LOG.warning(
+                "Home Assistant notification %s failed with HTTP %d: %s",
+                service,
+                response.status_code,
+                response.text[:200].strip(),
+            )
+            return False
+        return True
+    except requests.RequestException as exc:
+        LOG.warning("Home Assistant notification %s failed: %s", service, exc)
+        return False
+
+
+def update_stale_notification(freshness: dict[str, Any], stale_after_days: int) -> None:
+    if freshness["data_fresh"]:
+        call_persistent_notification(
+            "dismiss", {"notification_id": STALE_NOTIFICATION_ID}
+        )
+        return
+    latest = freshness["latest_data_timestamp"] or "necunoscut"
+    age = freshness["data_age_days"]
+    age_text = f"{age:.2f} zile" if isinstance(age, (int, float)) else "necunoscută"
+    call_persistent_notification(
+        "create",
+        {
+            "notification_id": STALE_NOTIFICATION_ID,
+            "title": "Date Rețele Electrice neactualizate",
+            "message": (
+                f"Measurement-ul reteleelectrice_meter_15m nu are date mai noi de "
+                f"{stale_after_days} zile. Ultimul punct: {latest}; vechime: {age_text}. "
+                "Verifică Rețele Electrice Collector și conexiunea către InfluxDB."
+            ),
+        },
+    )
 
 
 def selected_pods(portal: ReteleElectricePortal, pod_option: str) -> list[str]:
@@ -133,6 +210,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
     total_written = 0
     total_records = 0
     pods: list[str] = []
+    latest_data_timestamp: str | None = None
     try:
         influx.ping()
         portal.login()
@@ -158,6 +236,10 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                     chunk_end,
                     len(points),
                 )
+        latest = influx.latest_timestamp()
+        if latest is None:
+            raise RuntimeError("InfluxDB target measurement has no points after sync")
+        latest_data_timestamp = latest.isoformat()
     finally:
         portal.close()
         influx.close()
@@ -165,7 +247,13 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
     if total_records == 0:
         raise RuntimeError("The portal returned no load-curve records")
 
-    now = utc_now().isoformat()
+    now_dt = utc_now()
+    now = now_dt.isoformat()
+    freshness = data_freshness(
+        latest_data_timestamp,
+        int(options["stale_after_days"]),
+        now=now_dt,
+    )
     state.update(
         {
             "backfill_complete": True,
@@ -174,6 +262,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
             "last_start": start.isoformat(),
             "last_end": end.isoformat(),
             "last_points_written": total_written,
+            **freshness,
         }
     )
     save_state(state)
@@ -183,6 +272,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
         "points_written": total_written,
         "records_received": total_records,
         "last_success": now,
+        **freshness,
     }
 
 
@@ -200,6 +290,7 @@ def safe_status(options: dict[str, Any]) -> dict[str, Any]:
     data["interval_timestamp"] = options["interval_timestamp"]
     data["portal_chunk_days"] = PORTAL_MAX_CHUNK_DAYS
     data["latest_day_policy"] = "yesterday"
+    data["stale_after_days"] = options["stale_after_days"]
     return data
 
 
@@ -259,11 +350,11 @@ h1{font-size:24px;margin:0}.badge{padding:6px 10px;border-radius:999px;backgroun
 .card{background:var(--card);padding:16px;border-radius:12px}.label{color:var(--muted);font-size:12px;text-transform:uppercase}.value{font-size:20px;margin-top:6px;word-break:break-word}
 button{background:var(--accent);border:0;color:white;padding:10px 14px;border-radius:8px;cursor:pointer}pre{white-space:pre-wrap;background:#0b0f13;padding:14px;border-radius:10px;overflow:auto}
 </style></head><body><main><div class="head"><div><h1>Rețele Electrice Collector</h1><div class="label">official 15-minute meter data → InfluxDB</div></div><button onclick="syncNow()">Sync now</button></div>
-<div class="grid"><div class="card"><div class="label">State</div><div id="state" class="value">—</div></div><div class="card"><div class="label">Last success</div><div id="success" class="value">—</div></div><div class="card"><div class="label">Points written</div><div id="points" class="value">—</div></div><div class="card"><div class="label">Mode</div><div id="mode" class="value">—</div></div></div>
+<div class="grid"><div class="card"><div class="label">State</div><div id="state" class="value">—</div></div><div class="card"><div class="label">Last success</div><div id="success" class="value">—</div></div><div class="card"><div class="label">Latest data</div><div id="latest" class="value">—</div></div><div class="card"><div class="label">Data age</div><div id="age" class="value">—</div></div><div class="card"><div class="label">Points written</div><div id="points" class="value">—</div></div><div class="card"><div class="label">Mode</div><div id="mode" class="value">—</div></div></div>
 <div class="card"><div class="label">Diagnostics</div><pre id="diag">Loading…</pre></div></main>
 <script>
 const $=id=>document.getElementById(id);const fmt=v=>v?new Date(v).toLocaleString():'—';
-async function refresh(){try{const r=await fetch('api/status',{cache:'no-store'});const s=await r.json();$('state').textContent=s.state;$('success').textContent=fmt(s.last_success);$('points').textContent=s.points_written??0;$('mode').textContent=s.sync_mode||'—';$('diag').textContent=JSON.stringify(s,null,2)}catch(e){$('state').textContent='disconnected'}}
+async function refresh(){try{const r=await fetch('api/status',{cache:'no-store'});const s=await r.json();$('state').textContent=s.state;$('success').textContent=fmt(s.last_success);$('latest').textContent=fmt(s.latest_data_timestamp);$('age').textContent=s.data_age_days==null?'—':`${s.data_age_days} days`;$('points').textContent=s.points_written??0;$('mode').textContent=s.sync_mode||'—';$('diag').textContent=JSON.stringify(s,null,2)}catch(e){$('state').textContent='disconnected'}}
 async function syncNow(){await fetch('api/sync',{method:'POST'});setTimeout(refresh,500)}
 refresh();setInterval(refresh,5000);
 </script></body></html>"""
@@ -282,6 +373,7 @@ def scheduler(options: dict[str, Any]) -> None:
             RUNTIME.update({"state": "syncing", "last_sync": started, "last_error": ""})
         try:
             result = sync_once(options)
+            update_stale_notification(result, int(options["stale_after_days"]))
             with STATUS_LOCK:
                 RUNTIME.update(
                     {
@@ -292,12 +384,28 @@ def scheduler(options: dict[str, Any]) -> None:
                         "points_written": result["points_written"],
                         "records_received": result["records_received"],
                         "last_error": "",
+                        "latest_data_timestamp": result["latest_data_timestamp"],
+                        "data_age_days": result["data_age_days"],
+                        "data_fresh": result["data_fresh"],
                     }
                 )
         except Exception as exc:
             LOG.exception("Collector sync failed")
+            persisted = load_json(STATE_PATH, {})
+            freshness = data_freshness(
+                persisted.get("latest_data_timestamp"),
+                int(options["stale_after_days"]),
+            )
+            if not freshness["data_fresh"]:
+                update_stale_notification(freshness, int(options["stale_after_days"]))
             with STATUS_LOCK:
-                RUNTIME.update({"state": "error", "last_error": str(exc)})
+                RUNTIME.update(
+                    {
+                        "state": "error",
+                        "last_error": str(exc),
+                        **freshness,
+                    }
+                )
         next_run = time.monotonic() + interval
         with STATUS_LOCK:
             RUNTIME["next_sync"] = (utc_now() + timedelta(seconds=interval)).isoformat()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 from typing import Any, Iterable
 from urllib.parse import urljoin
 
@@ -22,6 +23,10 @@ def _escape_tag(value: str) -> str:
         .replace("=", "\\=")
         .replace(" ", "\\ ")
     )
+
+
+def _quote_identifier(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _field_value(value: Any) -> str | None:
@@ -86,6 +91,36 @@ class InfluxWriter:
         response = self.session.get(urljoin(self.url, "ping"), auth=self.auth, timeout=self.timeout)
         if response.status_code not in (200, 204):
             raise InfluxError(f"InfluxDB ping failed with HTTP {response.status_code}")
+
+    def latest_timestamp(self) -> datetime | None:
+        source = _quote_identifier(self.measurement)
+        if self.retention_policy:
+            source = f"{_quote_identifier(self.retention_policy)}.{source}"
+        response = self.session.get(
+            urljoin(self.url, "query"),
+            params={
+                "db": self.database,
+                "epoch": "s",
+                "q": f'SELECT LAST("slot") FROM {source}',
+            },
+            auth=self.auth,
+            timeout=self.timeout,
+        )
+        if response.status_code != 200:
+            detail = response.text[:300].strip()
+            raise InfluxError(
+                f"InfluxDB latest-point query failed with HTTP {response.status_code}: {detail}"
+            )
+
+        payload = response.json()
+        results = payload.get("results") or []
+        if results and results[0].get("error"):
+            raise InfluxError(f"InfluxDB latest-point query failed: {results[0]['error']}")
+        series = results[0].get("series") if results else None
+        values = series[0].get("values") if series else None
+        if not values or not values[0]:
+            return None
+        return datetime.fromtimestamp(float(values[0][0]), tz=timezone.utc)
 
     def write_points(self, points: Iterable[dict[str, Any]], batch_size: int = 5000) -> int:
         lines = [line for point in points if (line := point_to_line(self.measurement, point))]

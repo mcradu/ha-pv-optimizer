@@ -1,5 +1,5 @@
 name: Rețele Electrice Collector
-version: "0.1.1"
+version: "0.1.2"
 slug: reteleelectrice_collector
 description: Collect official 15-minute import/export meter curves from Rețele Electrice into InfluxDB
 url: https://github.com/mcradu/ha-pv-optimizer
@@ -9,6 +9,7 @@ arch:
 startup: application
 boot: auto
 init: false
+homeassistant_api: true
 ingress: true
 ingress_port: 8098
 panel_icon: mdi:transmission-tower
@@ -27,12 +28,13 @@ options:
   timezone: Europe/Bucharest
   interval_timestamp: start
   include_reactive: false
-  influxdb_url: http://a0d7b954-influxdb:8086
+  influxdb_url: http://192.168.0.10:8086
   influxdb_database: home_assistant
   influxdb_retention_policy: one_year
   influxdb_measurement: reteleelectrice_meter_15m
   influxdb_username: ""
   influxdb_password: ""
+  stale_after_days: 5
 schema:
   username: str
   password: password
@@ -49,3 +51,4 @@ schema:
   influxdb_measurement: str
   influxdb_username: str
   influxdb_password: password
+  stale_after_days: int(1,30)
