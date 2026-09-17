@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6
+
+- Add `export_price_ron_per_kwh` to the Home Assistant app Configuration UI, defaulting to `0.11` RON/kWh.
+- Calculate and display the estimated value of exportable night surplus.
+- Persist the configured export price and estimated surplus value in night-injection telemetry.
+- Preserve the existing reserve and export-target rules; price is economic context only.
+
 ## 0.2.5
 
 - Persist shadow night-injection decisions to `pv_optimizer_night_injection` in InfluxDB.

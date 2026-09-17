@@ -20,6 +20,7 @@ def base(**changes):
         night_load_w=800,
         night_min_w=200,
         night_max_w=1200,
+        export_price_ron_per_kwh=0.11,
         enabled=True,
     )
     values.update(changes)
@@ -50,6 +51,12 @@ class EngineTests(unittest.TestCase):
         result = calculate(base(battery_soc=60))
         self.assertIn("stop_soc_reached", result["blockers"])
 
+    def test_export_price_values_available_surplus(self):
+        result = calculate(base(battery_soc=100, export_price_ron_per_kwh=0.66))
+        self.assertEqual(result["surplus_kwh"], 2.4)
+        self.assertEqual(result["export_price_ron_per_kwh"], 0.66)
+        self.assertEqual(result["exportable_surplus_value_ron"], 1.584)
+
     def test_daytime_does_not_publish_active_night_thresholds(self):
         result = calculate(base(sun_below_horizon=False, hours_until_sunrise=18.3, battery_soc=65))
         self.assertEqual(result["blockers"], ["outside_night_window"])
@@ -57,6 +64,7 @@ class EngineTests(unittest.TestCase):
         self.assertIsNone(result["start_soc"])
         self.assertIsNone(result["needed_until_sunrise_kwh"])
         self.assertIsNone(result["surplus_kwh"])
+        self.assertIsNone(result["exportable_surplus_value_ron"])
         self.assertNotIn("stop_soc_reached", result["blockers"])
 
 

@@ -1,5 +1,5 @@
 name: HA PV Optimizer
-version: "0.2.5"
+version: "0.2.6"
 slug: pv_optimizer
 description: Explainable PV battery-export optimization with an integrated Web UI
 url: https://github.com/mcradu/ha-pv-optimizer
@@ -28,6 +28,7 @@ options:
   night_max_w: 1200
   night_min_w: 200
   morning_max_w: 700
+  export_price_ron_per_kwh: 0.11
   charge_optimizer_enabled: true
   charge_on_voltage: 249
   charge_off_voltage: 247
@@ -69,6 +70,7 @@ schema:
   night_max_w: int(0,10000)
   night_min_w: int(0,5000)
   morning_max_w: int(0,5000)
+  export_price_ron_per_kwh: float(0,10)
   charge_optimizer_enabled: bool
   charge_on_voltage: float(230,260)
   charge_off_voltage: float(230,260)

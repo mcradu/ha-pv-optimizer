@@ -1,0 +1,4 @@
+configuration:
+  export_price_ron_per_kwh:
+    name: Preț energie injectată
+    description: Prețul fix al energiei injectate, în lei/kWh, folosit pentru evaluarea surplusului exportabil din baterie.

@@ -20,6 +20,7 @@ class Inputs:
     night_load_w: float
     night_min_w: int
     night_max_w: int
+    export_price_ron_per_kwh: float
     enabled: bool = True
 
 
@@ -45,6 +46,8 @@ def calculate(values: Inputs, requested_mode: str = "auto") -> dict[str, Any]:
             "start_soc": None,
             "needed_until_sunrise_kwh": None,
             "surplus_kwh": None,
+            "export_price_ron_per_kwh": values.export_price_ron_per_kwh,
+            "exportable_surplus_value_ron": None,
             "blockers": blockers,
             "inputs": asdict(values),
             "explanation": "No battery export: outside the night window.",
@@ -55,6 +58,7 @@ def calculate(values: Inputs, requested_mode: str = "auto") -> dict[str, Any]:
     stop_soc = round(_clamp(values.minimum_morning_soc + needed_soc + values.safety_margin_soc, 20, 100))
     start_soc = round(_clamp(stop_soc + values.hysteresis_soc, 0, 100))
     surplus_kwh = round(max(values.battery_soc - stop_soc, 0) / 100 * values.battery_capacity_kwh, 3)
+    exportable_surplus_value_ron = round(surplus_kwh * max(values.export_price_ron_per_kwh, 0), 3)
 
     blockers: list[str] = []
     if not values.enabled:
@@ -86,15 +90,34 @@ def calculate(values: Inputs, requested_mode: str = "auto") -> dict[str, Any]:
         "start_soc": start_soc,
         "needed_until_sunrise_kwh": round(needed_kwh, 3),
         "surplus_kwh": surplus_kwh,
+        "export_price_ron_per_kwh": values.export_price_ron_per_kwh,
+        "exportable_surplus_value_ron": exportable_surplus_value_ron,
         "blockers": blockers,
         "inputs": asdict(values),
-        "explanation": _explain(calculated_w, stop_soc, surplus_kwh, blockers, requested_mode),
+        "explanation": _explain(
+            calculated_w,
+            stop_soc,
+            surplus_kwh,
+            exportable_surplus_value_ron,
+            blockers,
+            requested_mode,
+        ),
     }
 
 
-def _explain(target: int, stop_soc: int, surplus: float, blockers: list[str], mode: str) -> str:
+def _explain(
+    target: int,
+    stop_soc: int,
+    surplus: float,
+    surplus_value_ron: float,
+    blockers: list[str],
+    mode: str,
+) -> str:
     if blockers:
         return "No export: " + ", ".join(blockers) + "."
     if mode in {"stop", "failsafe", "day"}:
         return f"{mode.replace('_', ' ').title()} requested; simulated export target is 0 W."
-    return f"Shadow target {target} W from {surplus:.3f} kWh surplus while preserving {stop_soc}% SOC."
+    return (
+        f"Shadow target {target} W from {surplus:.3f} kWh surplus "
+        f"(estimated value {surplus_value_ron:.3f} RON) while preserving {stop_soc}% SOC."
+    )
