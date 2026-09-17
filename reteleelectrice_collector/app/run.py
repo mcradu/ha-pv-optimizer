@@ -16,11 +16,11 @@ from urllib.parse import urlparse
 
 import requests
 
-from influx import InfluxWriter
+from influx import InfluxError, InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
@@ -64,6 +64,8 @@ RUNTIME: dict[str, Any] = {
     "latest_data_timestamp": None,
     "data_age_days": None,
     "data_fresh": None,
+    "freshness_source": None,
+    "freshness_query_error": "",
 }
 
 
@@ -165,6 +167,41 @@ def update_stale_notification(freshness: dict[str, Any], stale_after_days: int) 
     )
 
 
+def resolve_latest_timestamp(
+    influx: InfluxWriter,
+    latest_accepted_epoch: int | None,
+) -> tuple[datetime, str, str]:
+    try:
+        latest = influx.latest_timestamp()
+        if latest is not None:
+            return latest, "influx_query", ""
+    except InfluxError as exc:
+        if latest_accepted_epoch is None:
+            raise
+        LOG.warning(
+            "InfluxDB read verification unavailable after successful write; "
+            "using the newest timestamp accepted by the write API: %s",
+            exc,
+        )
+        return (
+            datetime.fromtimestamp(latest_accepted_epoch, tz=timezone.utc),
+            "write_acknowledgement",
+            str(exc),
+        )
+
+    if latest_accepted_epoch is None:
+        raise RuntimeError("InfluxDB target measurement has no points after sync")
+    LOG.warning(
+        "InfluxDB latest-point query returned no series after a successful write; "
+        "using the newest timestamp accepted by the write API"
+    )
+    return (
+        datetime.fromtimestamp(latest_accepted_epoch, tz=timezone.utc),
+        "write_acknowledgement",
+        "latest-point query returned no series",
+    )
+
+
 def selected_pods(portal: ReteleElectricePortal, pod_option: str) -> list[str]:
     configured = [value.strip() for value in pod_option.split(",") if value.strip()]
     if configured:
@@ -211,6 +248,9 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
     total_records = 0
     pods: list[str] = []
     latest_data_timestamp: str | None = None
+    latest_accepted_epoch: int | None = None
+    freshness_source = ""
+    freshness_query_error = ""
     try:
         influx.ping()
         portal.login()
@@ -228,7 +268,20 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                     interval_timestamp=str(options["interval_timestamp"]),
                     include_reactive=bool(options["include_reactive"]),
                 )
-                total_written += influx.write_points(points)
+                written = influx.write_points(points)
+                total_written += written
+                if written:
+                    point_timestamps = [
+                        int(point["timestamp"])
+                        for point in points
+                        if point.get("timestamp") is not None
+                    ]
+                    if point_timestamps:
+                        newest = max(point_timestamps)
+                        latest_accepted_epoch = max(
+                            latest_accepted_epoch or newest,
+                            newest,
+                        )
                 LOG.info(
                     "POD %s: %s..%s -> %d points",
                     pod,
@@ -236,9 +289,10 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                     chunk_end,
                     len(points),
                 )
-        latest = influx.latest_timestamp()
-        if latest is None:
-            raise RuntimeError("InfluxDB target measurement has no points after sync")
+        latest, freshness_source, freshness_query_error = resolve_latest_timestamp(
+            influx,
+            latest_accepted_epoch,
+        )
         latest_data_timestamp = latest.isoformat()
     finally:
         portal.close()
@@ -262,6 +316,8 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
             "last_start": start.isoformat(),
             "last_end": end.isoformat(),
             "last_points_written": total_written,
+            "freshness_source": freshness_source,
+            "freshness_query_error": freshness_query_error,
             **freshness,
         }
     )
@@ -272,6 +328,8 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
         "points_written": total_written,
         "records_received": total_records,
         "last_success": now,
+        "freshness_source": freshness_source,
+        "freshness_query_error": freshness_query_error,
         **freshness,
     }
 
@@ -387,6 +445,8 @@ def scheduler(options: dict[str, Any]) -> None:
                         "latest_data_timestamp": result["latest_data_timestamp"],
                         "data_age_days": result["data_age_days"],
                         "data_fresh": result["data_fresh"],
+                        "freshness_source": result["freshness_source"],
+                        "freshness_query_error": result["freshness_query_error"],
                     }
                 )
         except Exception as exc:
