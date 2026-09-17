@@ -8,10 +8,10 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP))
 
-from influx import InfluxWriter, point_to_line
+from influx import InfluxError, InfluxWriter, point_to_line
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, parse_a4j_response
-from run import chunk_dates, data_freshness, sync_window
+from run import chunk_dates, data_freshness, resolve_latest_timestamp, sync_window
 
 
 class ParserTests(unittest.TestCase):
@@ -151,6 +151,25 @@ class InfluxTests(unittest.TestCase):
             params["q"],
             'SELECT LAST("slot") FROM "one_year"."reteleelectrice_meter_15m"',
         )
+
+    def test_write_only_credentials_use_acknowledged_timestamp(self):
+        writer = Mock()
+        writer.latest_timestamp.side_effect = InfluxError(
+            "InfluxDB latest-point query failed: database not found: home_assistant"
+        )
+
+        latest, source, query_error = resolve_latest_timestamp(writer, 1789418700)
+
+        self.assertEqual(latest, datetime.fromtimestamp(1789418700, tz=timezone.utc))
+        self.assertEqual(source, "write_acknowledgement")
+        self.assertIn("database not found", query_error)
+
+    def test_query_failure_without_accepted_write_is_fatal(self):
+        writer = Mock()
+        writer.latest_timestamp.side_effect = InfluxError("query failed")
+
+        with self.assertRaises(InfluxError):
+            resolve_latest_timestamp(writer, None)
 
 
 if __name__ == "__main__":

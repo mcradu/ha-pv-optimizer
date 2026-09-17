@@ -46,6 +46,8 @@ A manual sync can be triggered from the Ingress page.
 
 After every sync, the collector queries the newest timestamp actually stored in `reteleelectrice_meter_15m`. The status page shows that timestamp, its age, and whether it is fresh.
 
+The dedicated `reteleelectrice` credential may remain write-only. If InfluxDB accepts the batch but rejects the optional read-back query, the collector uses the newest timestamp acknowledged by the v1 write API and reports `freshness_source=write_acknowledgement`. This preserves least-privilege access while still detecting stale source data. A failed write never uses this fallback.
+
 `stale_after_days` defaults to 5 days. When the newest stored point is older than the threshold, the app creates or updates one persistent Home Assistant notification. The same notification is dismissed automatically after fresh data is confirmed. A successful process run alone is not treated as proof that the destination measurement is current.
 
 ## Interval timestamps

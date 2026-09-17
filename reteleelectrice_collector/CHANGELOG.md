@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- Preserve the dedicated Rețele Electrice InfluxDB credential as write-only.
+- When a batch write succeeds but the optional read-back query is denied, calculate freshness from the newest timestamp acknowledged by the write API.
+- Expose whether freshness came from an InfluxDB query or a successful write acknowledgement.
+- Keep query failures fatal when no point was successfully accepted.
+
 ## 0.1.2
 
 - Change the default InfluxDB endpoint from the retired Home Assistant add-on to the managed NAS instance at `192.168.0.10:8086`.
