@@ -1,16 +1,17 @@
 import json
 import sys
 import unittest
+from unittest.mock import Mock
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP))
 
-from influx import point_to_line
+from influx import InfluxWriter, point_to_line
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, parse_a4j_response
-from run import chunk_dates, sync_window
+from run import chunk_dates, data_freshness, sync_window
 
 
 class ParserTests(unittest.TestCase):
@@ -63,6 +64,14 @@ class SchedulingTests(unittest.TestCase):
         self.assertTrue(all((end - start).days + 1 <= 31 for start, end in chunks))
         self.assertEqual(chunks[-1][1], date(2026, 3, 10))
 
+    def test_data_freshness_uses_configured_threshold(self):
+        now = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+        fresh = data_freshness("2026-09-14T23:45:00+00:00", 5, now=now)
+        stale = data_freshness("2026-09-11T23:45:00+00:00", 5, now=now)
+        self.assertTrue(fresh["data_fresh"])
+        self.assertFalse(stale["data_fresh"])
+        self.assertEqual(fresh["data_age_days"], 2.51)
+
 
 class NormalizationTests(unittest.TestCase):
     def payload(self):
@@ -107,6 +116,41 @@ class NormalizationTests(unittest.TestCase):
         self.assertIn("import_kwh=0.1", line)
         self.assertIn("export_kwh=0.3", line)
         self.assertTrue(line.endswith(str(point["timestamp"])))
+
+
+class InfluxTests(unittest.TestCase):
+    def test_latest_timestamp_queries_target_measurement(self):
+        writer = InfluxWriter(
+            "http://influx.example:8086",
+            "home_assistant",
+            "one_year",
+            "reteleelectrice_meter_15m",
+        )
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "results": [
+                {
+                    "series": [
+                        {
+                            "columns": ["time", "last"],
+                            "values": [[1789429500, 96]],
+                        }
+                    ]
+                }
+            ]
+        }
+        writer.session.get = Mock(return_value=response)
+
+        latest = writer.latest_timestamp()
+
+        self.assertEqual(latest, datetime.fromtimestamp(1789429500, tz=timezone.utc))
+        params = writer.session.get.call_args.kwargs["params"]
+        self.assertEqual(params["db"], "home_assistant")
+        self.assertEqual(
+            params["q"],
+            'SELECT LAST("slot") FROM "one_year"."reteleelectrice_meter_15m"',
+        )
 
 
 if __name__ == "__main__":

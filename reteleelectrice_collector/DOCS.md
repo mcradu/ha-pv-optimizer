@@ -28,6 +28,8 @@ The default InfluxDB target is:
 
 `home_assistant.one_year.reteleelectrice_meter_15m`
 
+The default server is the managed NAS instance at `http://192.168.0.10:8086`. Existing installations keep their saved app options, so verify the endpoint explicitly after an InfluxDB migration. Credentials remain in Home Assistant Supervisor options and must not be committed to Git.
+
 Set the InfluxDB username and password if the local instance requires authentication.
 
 ## Synchronization
@@ -39,6 +41,12 @@ The portal UI treats the current calendar day as incomplete and clamps downloads
 After the first successful backfill, every run re-reads the latest `rolling_days` completed days (default 7). Writes are idempotent because InfluxDB uses the same measurement, tags, and timestamp for the same interval. This rolling window also handles delayed publication or corrections by the distributor.
 
 A manual sync can be triggered from the Ingress page.
+
+## Freshness monitoring
+
+After every sync, the collector queries the newest timestamp actually stored in `reteleelectrice_meter_15m`. The status page shows that timestamp, its age, and whether it is fresh.
+
+`stale_after_days` defaults to 5 days. When the newest stored point is older than the threshold, the app creates or updates one persistent Home Assistant notification. The same notification is dismissed automatically after fresh data is confirmed. A successful process run alone is not treated as proof that the destination measurement is current.
 
 ## Interval timestamps
 

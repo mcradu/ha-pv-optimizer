@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- Change the default InfluxDB endpoint from the retired Home Assistant add-on to the managed NAS instance at `192.168.0.10:8086`.
+- Query the newest timestamp actually stored in `reteleelectrice_meter_15m` after every sync.
+- Add a configurable five-day stale-data threshold, status-page diagnostics, and a deduplicated Home Assistant persistent notification.
+- Keep InfluxDB and portal credentials in Supervisor runtime options; no credentials are added to Git.
+
 ## 0.1.1
 
 - Never request the current calendar day from `FindOutMeterLoadData`; the collector now ends each sync at yesterday, matching the portal UI's completed-day behavior.
