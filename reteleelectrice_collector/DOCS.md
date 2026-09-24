@@ -38,7 +38,7 @@ On the first successful run, the app backfills `backfill_days` (default 365). Fo
 
 The portal UI treats the current calendar day as incomplete and clamps downloads to the previous day. The collector follows the same rule: every automatic or manual sync ends at **yesterday** in the configured timezone. This avoids requesting an incomplete day from `FindOutMeterLoadData`, which can return HTTP 500.
 
-After the first successful backfill, every run re-reads the latest `rolling_days` completed days (default 7). Writes are idempotent because InfluxDB uses the same measurement, tags, and timestamp for the same interval. This rolling window also handles delayed publication or corrections by the distributor.
+After the first successful backfill, every run re-reads the latest `rolling_days` completed days (default 7). If the newest persisted meter timestamp is older than that rolling window, the collector automatically extends the request back to the next missing local day, bounded by `backfill_days`. This closes outage gaps such as a collector being offline for longer than the rolling window. Successful catch-up chunks checkpoint their newest accepted timestamp, so a quota-limited catch-up resumes forward instead of restarting from the oldest gap. Writes are idempotent because InfluxDB uses the same measurement, tags, and timestamp for the same interval.
 
 The effective automatic interval is never shorter than 24 hours. Existing installations that still have an older saved value such as 360 minutes are clamped to 1440 minutes at runtime, so upgrading does not require editing Supervisor options first. A container restart does not trigger a fresh sync when the previous attempt is still inside that interval.
 
@@ -50,9 +50,9 @@ A manual sync can be triggered from the Ingress page, but it cannot bypass the r
 
 ## Freshness monitoring
 
-After every sync, the collector queries the newest timestamp actually stored in `reteleelectrice_meter_15m`. The status page shows that timestamp, its age, and whether it is fresh.
+After a successful batch write, the collector uses the newest timestamp accepted by the InfluxDB v1 write API and reports `freshness_source=write_acknowledgement`. It does not perform a redundant read-back when points were just accepted. If a sync has no newly accepted point, it falls back to querying the target measurement.
 
-The dedicated `reteleelectrice` credential may remain write-only. If InfluxDB accepts the batch but rejects the optional read-back query, the collector uses the newest timestamp acknowledged by the v1 write API and reports `freshness_source=write_acknowledgement`. This preserves least-privilege access while still detecting stale source data. A failed write never uses this fallback.
+The dedicated `reteleelectrice` credential can therefore remain write-only during normal collection. This preserves least-privilege access and avoids false read-verification warnings while still detecting stale source data. A failed write never advances freshness state.
 
 `stale_after_days` defaults to 5 days. When the newest stored point is older than the threshold, the app creates or updates one persistent Home Assistant notification. The same notification is dismissed automatically after fresh data is confirmed. A successful process run alone is not treated as proof that the destination measurement is current.
 
