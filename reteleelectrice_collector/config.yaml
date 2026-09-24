@@ -1,5 +1,5 @@
 name: Rețele Electrice Collector
-version: "0.1.3"
+version: "0.1.4"
 slug: reteleelectrice_collector
 description: Collect official 15-minute import/export meter curves from Rețele Electrice into InfluxDB
 url: https://github.com/mcradu/ha-pv-optimizer
@@ -22,7 +22,7 @@ options:
   username: ""
   password: ""
   pod: ""
-  sync_interval_minutes: 360
+  sync_interval_minutes: 1440
   rolling_days: 7
   backfill_days: 365
   timezone: Europe/Bucharest
@@ -35,6 +35,7 @@ options:
   influxdb_username: ""
   influxdb_password: ""
   stale_after_days: 5
+  portal_request_limit_24h: 8
 schema:
   username: str
   password: password
@@ -52,3 +53,4 @@ schema:
   influxdb_username: str
   influxdb_password: password
   stale_after_days: int(1,30)
+  portal_request_limit_24h: int(1,10)
