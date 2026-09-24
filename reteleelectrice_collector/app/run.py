@@ -20,7 +20,7 @@ from influx import InfluxError, InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
@@ -183,6 +183,20 @@ def seconds_until_scheduled_sync(
     return max(0.0, (due_at - current).total_seconds())
 
 
+def latest_source_day(
+    state: dict[str, Any],
+    timezone_name: str,
+    interval_timestamp: str,
+) -> date | None:
+    latest = _parse_utc(state.get("latest_data_timestamp"))
+    if latest is None:
+        return None
+    local = latest.astimezone(ZoneInfo(timezone_name))
+    if interval_timestamp == "end":
+        local -= timedelta(microseconds=1)
+    return local.date()
+
+
 def backfill_start_for_pod(
     state: dict[str, Any],
     pod: str,
@@ -272,35 +286,17 @@ def resolve_latest_timestamp(
     influx: InfluxWriter,
     latest_accepted_epoch: int | None,
 ) -> tuple[datetime, str, str]:
-    try:
-        latest = influx.latest_timestamp()
-        if latest is not None:
-            return latest, "influx_query", ""
-    except InfluxError as exc:
-        if latest_accepted_epoch is None:
-            raise
-        LOG.warning(
-            "InfluxDB read verification unavailable after successful write; "
-            "using the newest timestamp accepted by the write API: %s",
-            exc,
-        )
+    if latest_accepted_epoch is not None:
         return (
             datetime.fromtimestamp(latest_accepted_epoch, tz=timezone.utc),
             "write_acknowledgement",
-            str(exc),
+            "",
         )
 
-    if latest_accepted_epoch is None:
+    latest = influx.latest_timestamp()
+    if latest is None:
         raise RuntimeError("InfluxDB target measurement has no points after sync")
-    LOG.warning(
-        "InfluxDB latest-point query returned no series after a successful write; "
-        "using the newest timestamp accepted by the write API"
-    )
-    return (
-        datetime.fromtimestamp(latest_accepted_epoch, tz=timezone.utc),
-        "write_acknowledgement",
-        "latest-point query returned no series",
-    )
+    return latest, "influx_query", ""
 
 
 def selected_pods(portal: ReteleElectricePortal, pod_option: str) -> list[str]:
@@ -320,13 +316,30 @@ def chunk_dates(start: date, end: date, maximum_days: int = PORTAL_MAX_CHUNK_DAY
 
 def sync_window(options: dict[str, Any], state: dict[str, Any], today: date) -> tuple[date, date, str]:
     first_backfill = not bool(state.get("backfill_complete"))
-    days = options["backfill_days"] if first_backfill else options["rolling_days"]
 
     # The portal UI itself clamps curve downloads to the latest completed day.
     # Asking FindOutMeterLoadData for the current date can produce an HTTP 500.
     end = today - timedelta(days=1)
-    start = end - timedelta(days=days - 1)
-    mode = "backfill" if first_backfill else "rolling"
+    if first_backfill:
+        start = end - timedelta(days=int(options["backfill_days"]) - 1)
+        return start, end, "backfill"
+
+    rolling_start = end - timedelta(days=int(options["rolling_days"]) - 1)
+    start = rolling_start
+    mode = "rolling"
+
+    latest_day = latest_source_day(
+        state,
+        str(options["timezone"]),
+        str(options["interval_timestamp"]),
+    )
+    if latest_day is not None:
+        recovery_floor = end - timedelta(days=int(options["backfill_days"]) - 1)
+        catchup_start = max(recovery_floor, latest_day + timedelta(days=1))
+        if catchup_start < rolling_start:
+            start = catchup_start
+            mode = "catchup"
+
     return start, end, mode
 
 
@@ -404,6 +417,13 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                             latest_accepted_epoch or newest,
                             newest,
                         )
+                        state["latest_data_timestamp"] = datetime.fromtimestamp(
+                            latest_accepted_epoch,
+                            tz=timezone.utc,
+                        ).isoformat()
+                        state["freshness_source"] = "write_acknowledgement"
+                        state["freshness_query_error"] = ""
+                        save_state(state)
                 if mode == "backfill":
                     cursors = dict(state.get("backfill_cursor_by_pod") or {})
                     cursors[pod] = (chunk_end + timedelta(days=1)).isoformat()
