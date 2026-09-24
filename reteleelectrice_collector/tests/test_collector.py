@@ -1,7 +1,7 @@
 import json
 import sys
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -94,8 +94,9 @@ class SchedulingTests(unittest.TestCase):
                 f"2026-09-24T0{hour}:00:00+00:00" for hour in range(8)
             ]
         }
-        with self.assertRaises(PortalRateLimitError):
-            reserve_portal_request(state, 8, now=now)
+        with patch("run.save_state"):
+            with self.assertRaises(PortalRateLimitError):
+                reserve_portal_request(state, 8, now=now)
 
     def test_restart_guard_waits_until_24h_interval_is_due(self):
         now = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc)
