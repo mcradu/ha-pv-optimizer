@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- Extend rolling synchronization back to the day after the newest persisted meter timestamp when an outage gap falls outside the configured rolling window, bounded by `backfill_days`.
+- Checkpoint the newest write-acknowledged timestamp after each successful chunk so long catch-up runs resume forward if the 24-hour portal budget interrupts them.
+- Stop issuing a redundant InfluxDB read-back after successful writes; write-only collector credentials now use the acknowledged timestamp directly without false verification warnings.
+- Keep read-back as a fallback only when a sync has no newly accepted point.
+
 ## 0.1.4
 
 - Change the default automatic sync interval to 24 hours and clamp older saved intervals to at least 1440 minutes at runtime.
