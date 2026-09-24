@@ -16,6 +16,7 @@ from run import (
     backfill_start_for_pod,
     chunk_dates,
     data_freshness,
+    latest_source_day,
     portal_request_status,
     reserve_portal_request,
     resolve_latest_timestamp,
@@ -61,12 +62,39 @@ class SchedulingTests(unittest.TestCase):
         self.assertEqual(mode, "backfill")
 
     def test_rolling_window_ends_yesterday(self):
-        options = {"backfill_days": 365, "rolling_days": 7}
+        options = {
+            "backfill_days": 365,
+            "rolling_days": 7,
+            "timezone": "Europe/Bucharest",
+            "interval_timestamp": "start",
+        }
         start, end, mode = sync_window(
             options, {"backfill_complete": True}, date(2026, 8, 28)
         )
         self.assertEqual((start, end), (date(2026, 8, 21), date(2026, 8, 27)))
         self.assertEqual(mode, "rolling")
+
+    def test_rolling_window_catches_up_from_latest_persisted_day(self):
+        options = {
+            "backfill_days": 365,
+            "rolling_days": 7,
+            "timezone": "Europe/Bucharest",
+            "interval_timestamp": "start",
+        }
+        state = {
+            "backfill_complete": True,
+            "latest_data_timestamp": "2026-09-14T20:45:00+00:00",
+        }
+        start, end, mode = sync_window(options, state, date(2026, 9, 24))
+        self.assertEqual((start, end), (date(2026, 9, 15), date(2026, 9, 23)))
+        self.assertEqual(mode, "catchup")
+
+    def test_interval_end_timestamp_maps_to_previous_source_day(self):
+        state = {"latest_data_timestamp": "2026-09-15T21:00:00+00:00"}
+        self.assertEqual(
+            latest_source_day(state, "Europe/Bucharest", "end"),
+            date(2026, 9, 15),
+        )
 
     def test_portal_chunks_are_at_most_31_days(self):
         chunks = list(chunk_dates(date(2026, 1, 1), date(2026, 3, 10)))
@@ -210,17 +238,26 @@ class InfluxTests(unittest.TestCase):
             'SELECT LAST("slot") FROM "one_year"."reteleelectrice_meter_15m"',
         )
 
-    def test_write_only_credentials_use_acknowledged_timestamp(self):
+    def test_successful_write_uses_acknowledged_timestamp_without_readback(self):
         writer = Mock()
-        writer.latest_timestamp.side_effect = InfluxError(
-            "InfluxDB latest-point query failed: database not found: home_assistant"
-        )
 
         latest, source, query_error = resolve_latest_timestamp(writer, 1789418700)
 
         self.assertEqual(latest, datetime.fromtimestamp(1789418700, tz=timezone.utc))
         self.assertEqual(source, "write_acknowledgement")
-        self.assertIn("database not found", query_error)
+        self.assertEqual(query_error, "")
+        writer.latest_timestamp.assert_not_called()
+
+    def test_no_accepted_write_uses_readback_when_available(self):
+        writer = Mock()
+        expected = datetime(2026, 9, 21, 20, 45, tzinfo=timezone.utc)
+        writer.latest_timestamp.return_value = expected
+
+        latest, source, query_error = resolve_latest_timestamp(writer, None)
+
+        self.assertEqual(latest, expected)
+        self.assertEqual(source, "influx_query")
+        self.assertEqual(query_error, "")
 
     def test_query_failure_without_accepted_write_is_fatal(self):
         writer = Mock()
