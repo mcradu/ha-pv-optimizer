@@ -40,7 +40,13 @@ The portal UI treats the current calendar day as incomplete and clamps downloads
 
 After the first successful backfill, every run re-reads the latest `rolling_days` completed days (default 7). Writes are idempotent because InfluxDB uses the same measurement, tags, and timestamp for the same interval. This rolling window also handles delayed publication or corrections by the distributor.
 
-A manual sync can be triggered from the Ingress page.
+The effective automatic interval is never shorter than 24 hours. Existing installations that still have an older saved value such as 360 minutes are clamped to 1440 minutes at runtime, so upgrading does not require editing Supervisor options first. A container restart does not trigger a fresh sync when the previous attempt is still inside that interval.
+
+The collector maintains a persistent sliding 24-hour request budget for `FindOutMeterLoadData`. The default budget is 8 requests even though the portal limit is 10, leaving two requests of safety margin. Each load-curve request is reserved and persisted before it is sent, so a failed HTTP request or process crash cannot accidentally hide a consumed request. Manual sync uses the same budget.
+
+Backfill is resumable per POD. Each successful 31-day chunk advances a persistent cursor. If the 24-hour request budget is exhausted, the collector stops before the next portal request and continues from the saved cursor on a later run instead of restarting the whole history.
+
+A manual sync can be triggered from the Ingress page, but it cannot bypass the request budget.
 
 ## Freshness monitoring
 

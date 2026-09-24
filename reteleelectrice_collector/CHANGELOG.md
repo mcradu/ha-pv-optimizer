@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4
+
+- Change the default automatic sync interval to 24 hours and clamp older saved intervals to at least 1440 minutes at runtime.
+- Persist a sliding 24-hour `FindOutMeterLoadData` request budget, defaulting to 8 of the portal's 10 allowed requests.
+- Reserve quota before each load-curve call so failed requests and crashes still consume the local safety budget.
+- Suppress automatic sync after container restart until the configured interval is due.
+- Make historical backfill resumable per POD and pause safely when the request budget is exhausted.
+- Expose request usage, remaining budget, reset time, and backfill progress in diagnostics.
+
 ## 0.1.3
 
 - Preserve the dedicated Rețele Electrice InfluxDB credential as write-only.
