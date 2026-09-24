@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from influx import InfluxError, InfluxWriter
+from influx import InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
