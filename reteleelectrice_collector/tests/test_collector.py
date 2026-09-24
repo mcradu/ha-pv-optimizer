@@ -11,7 +11,17 @@ sys.path.insert(0, str(APP))
 from influx import InfluxError, InfluxWriter, point_to_line
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, parse_a4j_response
-from run import chunk_dates, data_freshness, resolve_latest_timestamp, sync_window
+from run import (
+    PortalRateLimitError,
+    backfill_start_for_pod,
+    chunk_dates,
+    data_freshness,
+    portal_request_status,
+    reserve_portal_request,
+    resolve_latest_timestamp,
+    seconds_until_scheduled_sync,
+    sync_window,
+)
 
 
 class ParserTests(unittest.TestCase):
@@ -63,6 +73,53 @@ class SchedulingTests(unittest.TestCase):
         self.assertEqual(chunks[0], (date(2026, 1, 1), date(2026, 1, 31)))
         self.assertTrue(all((end - start).days + 1 <= 31 for start, end in chunks))
         self.assertEqual(chunks[-1][1], date(2026, 3, 10))
+
+    def test_request_budget_is_sliding_24_hours(self):
+        now = datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc)
+        state = {
+            "portal_request_history": [
+                "2026-09-23T07:59:59+00:00",
+                "2026-09-23T08:00:01+00:00",
+                "2026-09-24T07:00:00+00:00",
+            ]
+        }
+        status = portal_request_status(state, 8, now=now)
+        self.assertEqual(status["portal_requests_24h"], 2)
+        self.assertEqual(status["portal_requests_remaining"], 6)
+
+    def test_request_budget_stops_before_ninth_reserved_call(self):
+        now = datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc)
+        state = {
+            "portal_request_history": [
+                f"2026-09-24T0{hour}:00:00+00:00" for hour in range(8)
+            ]
+        }
+        with self.assertRaises(PortalRateLimitError):
+            reserve_portal_request(state, 8, now=now)
+
+    def test_restart_guard_waits_until_24h_interval_is_due(self):
+        now = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc)
+        state = {"last_sync_attempt": "2026-09-24T06:00:00+00:00"}
+        self.assertEqual(
+            seconds_until_scheduled_sync(state, 1440, now=now),
+            18 * 3600,
+        )
+
+    def test_backfill_cursor_resumes_after_last_completed_chunk(self):
+        state = {
+            "backfill_cursor_by_pod": {
+                "RO00TESTPOD123456": "2026-02-01",
+            }
+        }
+        self.assertEqual(
+            backfill_start_for_pod(
+                state,
+                "RO00TESTPOD123456",
+                date(2026, 1, 1),
+                date(2026, 12, 31),
+            ),
+            date(2026, 2, 1),
+        )
 
     def test_data_freshness_uses_configured_threshold(self):
         now = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
