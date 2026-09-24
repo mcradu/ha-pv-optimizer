@@ -20,11 +20,12 @@ from influx import InfluxError, InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
 PORTAL_MAX_CHUNK_DAYS = 31
+PORTAL_REQUEST_WINDOW = timedelta(hours=24)
 HA_API_URL = "http://supervisor/core/api/services/persistent_notification"
 STALE_NOTIFICATION_ID = "reteleelectrice_collector_data_stale"
 LOG = logging.getLogger("reteleelectrice_collector")
@@ -33,7 +34,7 @@ DEFAULTS: dict[str, Any] = {
     "username": "",
     "password": "",
     "pod": "",
-    "sync_interval_minutes": 360,
+    "sync_interval_minutes": 1440,
     "rolling_days": 7,
     "backfill_days": 365,
     "timezone": "Europe/Bucharest",
@@ -46,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
     "influxdb_username": "",
     "influxdb_password": "",
     "stale_after_days": 5,
+    "portal_request_limit_24h": 8,
 }
 
 STATUS_LOCK = threading.Lock()
@@ -90,13 +92,112 @@ def save_state(state: dict[str, Any]) -> None:
 def load_options() -> dict[str, Any]:
     options = dict(DEFAULTS)
     options.update(load_json(OPTIONS_PATH, {}))
-    options["sync_interval_minutes"] = max(60, int(options["sync_interval_minutes"]))
+    options["sync_interval_minutes"] = max(1440, int(options["sync_interval_minutes"]))
     options["rolling_days"] = max(1, int(options["rolling_days"]))
     options["backfill_days"] = max(1, min(1095, int(options["backfill_days"])))
     options["stale_after_days"] = max(1, min(30, int(options["stale_after_days"])))
+    options["portal_request_limit_24h"] = max(1, min(10, int(options["portal_request_limit_24h"])))
     if options["interval_timestamp"] not in {"start", "end"}:
         raise ValueError("interval_timestamp must be 'start' or 'end'")
     return options
+
+
+class PortalRateLimitError(RuntimeError):
+    pass
+
+
+def _parse_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def portal_request_status(
+    state: dict[str, Any],
+    limit: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current = (now or utc_now()).astimezone(timezone.utc)
+    cutoff = current - PORTAL_REQUEST_WINDOW
+    retained: list[datetime] = []
+    for value in state.get("portal_request_history", []):
+        parsed = _parse_utc(str(value))
+        if parsed is not None and cutoff < parsed <= current:
+            retained.append(parsed)
+    retained.sort()
+    history = [item.isoformat() for item in retained]
+    remaining = max(0, limit - len(history))
+    reset_at = (
+        (retained[0] + PORTAL_REQUEST_WINDOW).isoformat()
+        if retained and remaining == 0
+        else None
+    )
+    return {
+        "portal_request_history": history,
+        "portal_requests_24h": len(history),
+        "portal_requests_remaining": remaining,
+        "portal_request_limit_24h": limit,
+        "portal_limit_reset_at": reset_at,
+    }
+
+
+def reserve_portal_request(
+    state: dict[str, Any],
+    limit: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current = (now or utc_now()).astimezone(timezone.utc)
+    status = portal_request_status(state, limit, current)
+    if status["portal_requests_remaining"] <= 0:
+        state.update(status)
+        save_state(state)
+        raise PortalRateLimitError(
+            f"Portal request budget exhausted: {status['portal_requests_24h']}/{limit} "
+            f"in the last 24h; next slot at {status['portal_limit_reset_at']}"
+        )
+    history = list(status["portal_request_history"])
+    history.append(current.isoformat())
+    state["portal_request_history"] = history
+    status = portal_request_status(state, limit, current)
+    state.update(status)
+    save_state(state)
+    return status
+
+
+def seconds_until_scheduled_sync(
+    state: dict[str, Any],
+    interval_minutes: int,
+    now: datetime | None = None,
+) -> float:
+    current = (now or utc_now()).astimezone(timezone.utc)
+    anchor = _parse_utc(state.get("last_sync_attempt") or state.get("last_success"))
+    if anchor is None:
+        return 0.0
+    due_at = anchor + timedelta(minutes=interval_minutes)
+    return max(0.0, (due_at - current).total_seconds())
+
+
+def backfill_start_for_pod(
+    state: dict[str, Any],
+    pod: str,
+    default_start: date,
+    end: date,
+) -> date:
+    cursors = state.get("backfill_cursor_by_pod") or {}
+    raw = cursors.get(pod)
+    if not raw:
+        return default_start
+    try:
+        cursor = date.fromisoformat(str(raw))
+    except ValueError:
+        return default_start
+    return min(max(default_start, cursor), end + timedelta(days=1))
 
 
 def data_freshness(
@@ -231,6 +332,12 @@ def sync_window(options: dict[str, Any], state: dict[str, Any], today: date) -> 
 
 def sync_once(options: dict[str, Any]) -> dict[str, Any]:
     state = load_json(STATE_PATH, {})
+    attempt_started = utc_now()
+    state["last_sync_attempt"] = attempt_started.isoformat()
+    limit = int(options["portal_request_limit_24h"])
+    state.update(portal_request_status(state, limit, attempt_started))
+    save_state(state)
+
     today = datetime.now(ZoneInfo(str(options["timezone"]))).date()
     start, end, mode = sync_window(options, state, today)
 
@@ -258,8 +365,23 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
         LOG.info("Sync mode=%s, pods=%d, range=%s..%s", mode, len(pods), start, end)
 
         for pod in pods:
+            pod_start = (
+                backfill_start_for_pod(state, pod, start, end)
+                if mode == "backfill"
+                else start
+            )
+            if pod_start > end:
+                continue
+
             cnp, cui = portal.get_pod_identity(pod)
-            for chunk_start, chunk_end in chunk_dates(start, end):
+            for chunk_start, chunk_end in chunk_dates(pod_start, end):
+                budget = reserve_portal_request(state, limit)
+                LOG.info(
+                    "Portal request budget before load-curve call: used=%d remaining=%d limit=%d",
+                    budget["portal_requests_24h"],
+                    budget["portal_requests_remaining"],
+                    limit,
+                )
                 payload = portal.get_load_curves(pod, cnp, cui, chunk_start, chunk_end)
                 total_records += len(payload.get("ListData") or [])
                 points = normalize_curve_payload(
@@ -282,6 +404,11 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                             latest_accepted_epoch or newest,
                             newest,
                         )
+                if mode == "backfill":
+                    cursors = dict(state.get("backfill_cursor_by_pod") or {})
+                    cursors[pod] = (chunk_end + timedelta(days=1)).isoformat()
+                    state["backfill_cursor_by_pod"] = cursors
+                    save_state(state)
                 LOG.info(
                     "POD %s: %s..%s -> %d points",
                     pod,
@@ -289,6 +416,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                     chunk_end,
                     len(points),
                 )
+
         latest, freshness_source, freshness_query_error = resolve_latest_timestamp(
             influx,
             latest_accepted_epoch,
@@ -301,6 +429,19 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
     if total_records == 0:
         raise RuntimeError("The portal returned no load-curve records")
 
+    backfill_complete = bool(state.get("backfill_complete"))
+    if mode == "backfill":
+        cursors = state.get("backfill_cursor_by_pod") or {}
+        backfill_complete = bool(pods) and all(
+            backfill_start_for_pod(
+                {"backfill_cursor_by_pod": cursors},
+                pod,
+                start,
+                end,
+            ) > end
+            for pod in pods
+        )
+
     now_dt = utc_now()
     now = now_dt.isoformat()
     freshness = data_freshness(
@@ -310,7 +451,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
     )
     state.update(
         {
-            "backfill_complete": True,
+            "backfill_complete": backfill_complete,
             "last_success": now,
             "last_mode": mode,
             "last_start": start.isoformat(),
@@ -318,6 +459,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
             "last_points_written": total_written,
             "freshness_source": freshness_source,
             "freshness_query_error": freshness_query_error,
+            **portal_request_status(state, limit, now_dt),
             **freshness,
         }
     )
@@ -328,11 +470,12 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
         "points_written": total_written,
         "records_received": total_records,
         "last_success": now,
+        "backfill_complete": backfill_complete,
         "freshness_source": freshness_source,
         "freshness_query_error": freshness_query_error,
+        **portal_request_status(state, limit, now_dt),
         **freshness,
     }
-
 
 def safe_status(options: dict[str, Any]) -> dict[str, Any]:
     with STATUS_LOCK:
@@ -349,6 +492,16 @@ def safe_status(options: dict[str, Any]) -> dict[str, Any]:
     data["portal_chunk_days"] = PORTAL_MAX_CHUNK_DAYS
     data["latest_day_policy"] = "yesterday"
     data["stale_after_days"] = options["stale_after_days"]
+    persisted = load_json(STATE_PATH, {})
+    data.update(
+        portal_request_status(
+            persisted,
+            int(options["portal_request_limit_24h"]),
+        )
+    )
+    data["effective_sync_interval_minutes"] = options["sync_interval_minutes"]
+    data["backfill_complete"] = bool(persisted.get("backfill_complete"))
+    data["backfill_cursor_by_pod"] = persisted.get("backfill_cursor_by_pod", {})
     return data
 
 
@@ -419,13 +572,30 @@ refresh();setInterval(refresh,5000);
 
 
 def scheduler(options: dict[str, Any]) -> None:
-    interval = int(options["sync_interval_minutes"]) * 60
-    next_run = time.monotonic()
+    interval_minutes = int(options["sync_interval_minutes"])
+    interval = interval_minutes * 60
+    persisted = load_json(STATE_PATH, {})
+    initial_wait = seconds_until_scheduled_sync(
+        persisted,
+        interval_minutes,
+    )
+    next_run = time.monotonic() + initial_wait
+    if initial_wait > 0:
+        with STATUS_LOCK:
+            RUNTIME["state"] = "idle"
+            RUNTIME["next_sync"] = (utc_now() + timedelta(seconds=initial_wait)).isoformat()
+        LOG.info(
+            "Startup sync suppressed; next automatic sync in %.0f seconds",
+            initial_wait,
+        )
+
     while True:
         wait = max(0.0, next_run - time.monotonic())
-        if wait > 0 and not MANUAL_SYNC.wait(wait):
-            pass
+        manual = False
+        if wait > 0:
+            manual = MANUAL_SYNC.wait(wait)
         MANUAL_SYNC.clear()
+
         started = utc_now().isoformat()
         with STATUS_LOCK:
             RUNTIME.update({"state": "syncing", "last_sync": started, "last_error": ""})
@@ -447,6 +617,25 @@ def scheduler(options: dict[str, Any]) -> None:
                         "data_fresh": result["data_fresh"],
                         "freshness_source": result["freshness_source"],
                         "freshness_query_error": result["freshness_query_error"],
+                        "portal_requests_24h": result["portal_requests_24h"],
+                        "portal_requests_remaining": result["portal_requests_remaining"],
+                        "portal_request_limit_24h": result["portal_request_limit_24h"],
+                        "portal_limit_reset_at": result["portal_limit_reset_at"],
+                    }
+                )
+        except PortalRateLimitError as exc:
+            LOG.warning("Collector sync paused by portal request budget: %s", exc)
+            persisted = load_json(STATE_PATH, {})
+            budget = portal_request_status(
+                persisted,
+                int(options["portal_request_limit_24h"]),
+            )
+            with STATUS_LOCK:
+                RUNTIME.update(
+                    {
+                        "state": "rate_limited",
+                        "last_error": str(exc),
+                        **budget,
                     }
                 )
         except Exception as exc:
@@ -466,10 +655,12 @@ def scheduler(options: dict[str, Any]) -> None:
                         **freshness,
                     }
                 )
+
         next_run = time.monotonic() + interval
         with STATUS_LOCK:
             RUNTIME["next_sync"] = (utc_now() + timedelta(seconds=interval)).isoformat()
-
+        if manual:
+            LOG.info("Manual sync completed; automatic schedule reset to the configured interval")
 
 def configure_logging() -> None:
     level = os.environ.get("LOG_LEVEL", "INFO").upper()
