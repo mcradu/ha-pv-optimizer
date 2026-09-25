@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Add static-definition-only literal candidates around archive keys such as `methodName` and `sParameterName`.
+- Restrict candidates to structural or archive-related identifiers and keep this extraction disabled for the live component instance payload.
+
 ## 0.2.0
 
 - Add privacy-filtered key/value relations for archive metadata such as `methodName=...` and `sParameterName=...`.
