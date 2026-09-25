@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Add sanitized static code contexts around archive anchors such as `methodName`, `sParameterName`, `listaParam`, and `XML_Readings`.
+- Preserve code structure and identifier-like literals from the static component definition while redacting POD-like values, long numeric identifiers, long token-like strings, and non-identifier string literals.
+- Keep this extraction disabled for the live component instance payload.
+
 ## 0.2.1
 
 - Add static-definition-only literal candidates around archive keys such as `methodName` and `sParameterName`.
