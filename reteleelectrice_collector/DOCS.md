@@ -72,6 +72,8 @@ From version 0.3.3 the probe UI reads the HTTP response body as text before atte
 
 Version 0.3.4 intentionally returns the metadata extraction itself to the compact 0.2.1 implementation. The later `static_code_contexts` expansion is removed because the production probe could hold the process busy long enough for the Home Assistant watchdog health request to fail and restart the app.
 
+Version 0.3.5 adds only bounded identifier-token windows around a small set of archive anchors. It does not emit raw code windows and caps the output to 24 contexts, which keeps the diagnostic lightweight while preserving variable names adjacent to `methodName` and `listaParam`.
+
 ## Security
 
 The collector does not store Salesforce session cookies, ViewState tokens, CNP/CUI values, or passwords in its state file or logs. Authentication/session material lives only in process memory.
