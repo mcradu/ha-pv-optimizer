@@ -69,11 +69,17 @@ class ParserTests(unittest.TestCase):
                 "index": "98765.432",
             },
         }
+        raw["controllerCode"] = (
+            "function loadArchive(){callAsync('FindOutMeterReadingData');"
+            "var pod='RO00SECRET123456';}"
+        )
         summary = summarize_component_metadata(raw)
         serialized = json.dumps(summary)
         self.assertIn("PODDetails", summary["action_names"])
         self.assertIn("GetArchive", summary["action_names"])
         self.assertIn("accountData", summary["schema_keys"])
+        self.assertIn("loadArchive", summary["identifier_signals"])
+        self.assertIn("FindOutMeterReadingData", summary["identifier_signals"])
         self.assertNotIn("RO00SECRET123456", serialized)
         self.assertNotIn("1234567890123", serialized)
         self.assertNotIn("98765.432", serialized)
