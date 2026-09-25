@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Remove the broad portal API discovery flow after repeated Home Assistant Ingress fetch failures.
+- Restore the known-working targeted `PED_Reading_Archive_Tab` diagnostic path from 0.2.2.
+- Make the probe UI parse the HTTP response as text first and show non-JSON proxy/backend responses verbatim for diagnosis.
+
 ## 0.3.1
 
 - Run portal API discovery as a background job and return HTTP 202 immediately, avoiding Home Assistant Ingress/browser request timeouts.
