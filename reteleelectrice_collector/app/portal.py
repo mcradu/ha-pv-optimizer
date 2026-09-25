@@ -400,9 +400,10 @@ class ReteleElectricePortal:
                     }
                 )
 
+                for child in child_components:
+                    all_components.add(child)
                 if depth < max_depth:
                     for child in child_components:
-                        all_components.add(child)
                         if child not in visited and child not in queued:
                             queue.append((child, depth + 1, component))
                             queued.add(child)
