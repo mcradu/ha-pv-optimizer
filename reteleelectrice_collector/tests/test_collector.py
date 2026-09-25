@@ -80,6 +80,14 @@ class ParserTests(unittest.TestCase):
         self.assertIn("accountData", summary["schema_keys"])
         self.assertIn("loadArchive", summary["identifier_signals"])
         self.assertIn("FindOutMeterReadingData", summary["identifier_signals"])
+        self.assertTrue(
+            any(
+                "loadArchive" in context
+                and "FindOutMeterReadingData" in context
+                and "pod" in context
+                for context in summary["identifier_contexts"]
+            )
+        )
         self.assertNotIn("RO00SECRET123456", serialized)
         self.assertNotIn("1234567890123", serialized)
         self.assertNotIn("98765.432", serialized)
