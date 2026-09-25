@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8
+
+- Extend the reading-archive diagnostic to inspect the definitions of the related async callback, date, and pagination Aura components.
+- Keep each related probe metadata-only and isolate failures per component so one missing definition does not abort the whole diagnostic.
+
 ## 0.1.7
 
 - Extend the reading-archive probe with filtered identifier signals from component code and metadata.
