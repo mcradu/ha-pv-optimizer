@@ -76,7 +76,10 @@ class ParserTests(unittest.TestCase):
             "callAsync('FindOutMeterReadingData');"
             "var pod='RO00SECRET123456';}"
         )
-        summary = summarize_component_metadata(raw)
+        summary = summarize_component_metadata(
+            raw,
+            include_literal_candidates=True,
+        )
         serialized = json.dumps(summary)
         self.assertIn("PODDetails", summary["action_names"])
         self.assertIn("GetArchive", summary["action_names"])
@@ -96,9 +99,25 @@ class ParserTests(unittest.TestCase):
             summary["safe_relations"],
         )
         self.assertIn("sParameterName=podId", summary["safe_relations"])
+        self.assertIn(
+            "methodName~PED_csvReadArchiveEAP",
+            summary["anchor_literal_candidates"],
+        )
+        self.assertIn(
+            "sParameterName~podId",
+            summary["anchor_literal_candidates"],
+        )
         self.assertNotIn("RO00SECRET123456", serialized)
         self.assertNotIn("1234567890123", serialized)
         self.assertNotIn("98765.432", serialized)
+
+    def test_literal_candidates_disabled_for_instance_style_payload(self):
+        raw = {
+            "methodName": "PED_ReadArchive",
+            "podId": "RO00SECRET123456",
+        }
+        summary = summarize_component_metadata(raw)
+        self.assertEqual(summary["anchor_literal_candidates"], [])
 
     def test_reading_archive_probe_uses_component_controller_actions(self):
         portal = ReteleElectricePortal("user", "password")
