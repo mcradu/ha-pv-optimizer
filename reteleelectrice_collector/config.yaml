@@ -1,5 +1,5 @@
 name: Rețele Electrice Collector
-version: "0.1.6"
+version: "0.1.7"
 slug: reteleelectrice_collector
 description: Collect official 15-minute import/export meter curves from Rețele Electrice into InfluxDB
 url: https://github.com/mcradu/ha-pv-optimizer

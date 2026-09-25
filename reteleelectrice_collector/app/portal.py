@@ -27,6 +27,27 @@ SAFE_DESCRIPTOR_RE = re.compile(
     r"(?:(?:apex|markup|aura)://[A-Za-z0-9_:.\-]+(?:/ACTION\$[A-Za-z0-9_]+)?)"
 )
 SAFE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.:-]{0,127}$")
+SAFE_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{2,95}")
+SAFE_SIGNAL_KEYWORDS = (
+    "read",
+    "archive",
+    "meter",
+    "index",
+    "energy",
+    "energ",
+    "consum",
+    "produc",
+    "reactive",
+    "active",
+    "async",
+    "webservice",
+    "service",
+    "misura",
+    "masur",
+    "contor",
+    "telecit",
+    "pod",
+)
 
 # Current Experience Cloud Aura identifiers. They are intentionally isolated here so
 # a portal deployment can be updated without touching the collector logic.
@@ -441,6 +462,16 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
     schema_keys: set[str] = set()
     descriptors: set[str] = set()
     action_names: set[str] = set()
+    identifier_signals: set[str] = set()
+
+    def collect_identifier_signals(text: str) -> None:
+        for token in SAFE_IDENTIFIER_RE.findall(text):
+            lowered = token.lower()
+            if not any(keyword in lowered for keyword in SAFE_SIGNAL_KEYWORDS):
+                continue
+            if re.fullmatch(r"RO[0-9A-Z]{10,30}", token, re.I):
+                continue
+            identifier_signals.add(token)
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
@@ -461,12 +492,14 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
             descriptors.add(descriptor)
             if "/ACTION$" in descriptor:
                 action_names.add(descriptor.rsplit("/ACTION$", 1)[1])
+        collect_identifier_signals(node)
 
     walk(value)
     return {
         "schema_keys": sorted(schema_keys),
         "descriptors": sorted(descriptors),
         "action_names": sorted(action_names),
+        "identifier_signals": sorted(identifier_signals),
     }
 
 
