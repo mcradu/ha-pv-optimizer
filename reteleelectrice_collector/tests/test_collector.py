@@ -97,6 +97,19 @@ class ParserTests(unittest.TestCase):
                     "controller": "apex://PED_ServizidiMisuraController/ACTION$PODDetails",
                     "sensitive": "RO00SECRET123456",
                 },
+                {
+                    "descriptor": "markup://c:PED_CallWSAsyncEvent",
+                    "methodName": "ReadArchiveService",
+                },
+                {
+                    "descriptor": "markup://c:PED_CallbackWSAsyncEvent",
+                    "attribute": "XML_Readings",
+                },
+                RuntimeError("dates event unavailable"),
+                {
+                    "descriptor": "markup://c:PED_Pagination",
+                    "currentPage": 1,
+                },
             ]
         )
 
@@ -108,6 +121,13 @@ class ParserTests(unittest.TestCase):
         )
         self.assertIn("ArchiveRows", result["definition"]["action_names"])
         self.assertIn("PODDetails", result["instance"]["action_names"])
+        self.assertIn("methodName", result["related_definitions"]["c:PED_CallWSAsyncEvent"]["schema_keys"])
+        self.assertIn("XML_Readings", result["related_definitions"]["c:PED_CallbackWSAsyncEvent"]["identifier_signals"])
+        self.assertEqual(
+            result["related_definitions"]["c:PED_Dates_event"]["error_type"],
+            "RuntimeError",
+        )
+        self.assertIn("currentPage", result["related_definitions"]["c:PED_Pagination"]["schema_keys"])
         self.assertNotIn("RO00SECRET123456", json.dumps(result))
 
         calls = portal._aura_call.call_args_list
@@ -119,6 +139,22 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(
             calls[1].kwargs["descriptor"],
             "aura://ComponentController/ACTION$getComponent",
+        )
+        self.assertEqual(
+            calls[2].kwargs["params"],
+            {"name": "c:PED_CallWSAsyncEvent"},
+        )
+        self.assertEqual(
+            calls[3].kwargs["params"],
+            {"name": "c:PED_CallbackWSAsyncEvent"},
+        )
+        self.assertEqual(
+            calls[4].kwargs["params"],
+            {"name": "c:PED_Dates_event"},
+        )
+        self.assertEqual(
+            calls[5].kwargs["params"],
+            {"name": "c:PED_Pagination"},
         )
 
 
