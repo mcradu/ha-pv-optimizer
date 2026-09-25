@@ -62,6 +62,12 @@ The portal returns `Q1...Qn` values and a frequency in minutes. The default `int
 
 Timestamps are converted from `Europe/Bucharest` to UTC before they are written. The conversion is monotonic across daylight-saving transitions and supports non-96-slot days.
 
+## Reading archive diagnostic
+
+Version 0.1.6 adds a temporary metadata-only probe for `c:PED_Reading_Archive_Tab`, the portal component behind the meter-reading archive. The probe authenticates with the existing account, requests the Aura component definition and instance metadata, and returns only structural dictionary keys, safe Aura/Apex/markup descriptors, and action names. Raw component values are discarded before the HTTP response is built. It does not write meter indexes to InfluxDB and does not call `FindOutMeterLoadData`, so it does not consume the collector's local load-curve request budget.
+
+Use **Probe index archive** on the Ingress page once, then capture only the JSON shown in the Reading archive probe panel. That JSON is designed to exclude POD values, CNP/CUI, meter indexes, passwords, cookies, ViewState, and Aura tokens.
+
 ## Security
 
 The collector does not store Salesforce session cookies, ViewState tokens, CNP/CUI values, or passwords in its state file or logs. Authentication/session material lives only in process memory.
