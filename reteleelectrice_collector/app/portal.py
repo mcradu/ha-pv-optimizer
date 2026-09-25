@@ -20,6 +20,13 @@ BASE_URL = "https://contulmeu.reteleelectrice.ro"
 LOGIN_PAGE = f"{BASE_URL}/PEDRO_SiteLogin"
 AURA_URL = f"{BASE_URL}/s/sfsites/aura"
 CURVE_VF_PAGE = "PED_ProxyCallWSAsync_Curve_VF"
+READING_ARCHIVE_COMPONENT = "c:PED_Reading_Archive_Tab"
+READING_ARCHIVE_CALLING_DESCRIPTOR = "markup://c:PED_Reading_Archive_Tab"
+
+SAFE_DESCRIPTOR_RE = re.compile(
+    r"(?:(?:apex|markup|aura)://[A-Za-z0-9_:.\-]+(?:/ACTION\$[A-Za-z0-9_]+)?)"
+)
+SAFE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.:-]{0,127}$")
 
 # Current Experience Cloud Aura identifiers. They are intentionally isolated here so
 # a portal deployment can be updated without touching the collector logic.
@@ -170,6 +177,35 @@ class ReteleElectricePortal:
         if not cnp and not cui:
             raise PortalError(f"PODDetails did not return an account identifier for {pod}")
         return cnp, cui
+
+    def get_component_definition(self, component_name: str) -> Any:
+        return self._aura_call(
+            descriptor="aura://ComponentController/ACTION$getComponentDef",
+            calling_descriptor="UNKNOWN",
+            params={"name": component_name},
+        )
+
+    def get_component_instance(self, component_name: str) -> Any:
+        return self._aura_call(
+            descriptor="aura://ComponentController/ACTION$getComponent",
+            calling_descriptor="UNKNOWN",
+            params={
+                "name": component_name,
+                "attributes": {},
+                "chainLoadLabels": False,
+            },
+        )
+
+    def probe_reading_archive_component(self) -> dict[str, Any]:
+        """Return metadata only; never return raw component/account values."""
+        definition = self.get_component_definition(READING_ARCHIVE_COMPONENT)
+        instance = self.get_component_instance(READING_ARCHIVE_COMPONENT)
+        return {
+            "component": READING_ARCHIVE_COMPONENT,
+            "calling_descriptor": READING_ARCHIVE_CALLING_DESCRIPTOR,
+            "definition": summarize_component_metadata(definition),
+            "instance": summarize_component_metadata(instance),
+        }
 
     def get_load_curves(
         self,
@@ -393,6 +429,45 @@ class ReteleElectricePortal:
     @staticmethod
     def _looks_like_pod(value: str) -> bool:
         return bool(re.fullmatch(r"RO[0-9A-Z]{10,30}", value.strip(), re.I))
+
+
+def summarize_component_metadata(value: Any) -> dict[str, Any]:
+    """Extract only structural metadata safe to expose in diagnostics.
+
+    Raw component payloads can contain account-specific values. This function
+    deliberately emits only dictionary key names, Aura/Apex/markup descriptors,
+    and action names derivable from those descriptors.
+    """
+    schema_keys: set[str] = set()
+    descriptors: set[str] = set()
+    action_names: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                key_text = str(key)
+                if SAFE_NAME_RE.fullmatch(key_text):
+                    schema_keys.add(key_text)
+                walk(child)
+            return
+        if isinstance(node, list):
+            for child in node:
+                walk(child)
+            return
+        if not isinstance(node, str):
+            return
+
+        for descriptor in SAFE_DESCRIPTOR_RE.findall(node):
+            descriptors.add(descriptor)
+            if "/ACTION$" in descriptor:
+                action_names.add(descriptor.rsplit("/ACTION$", 1)[1])
+
+    walk(value)
+    return {
+        "schema_keys": sorted(schema_keys),
+        "descriptors": sorted(descriptors),
+        "action_names": sorted(action_names),
+    }
 
 
 def parse_a4j_response(response_text: str) -> Any:

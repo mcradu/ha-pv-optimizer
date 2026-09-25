@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6
+
+- Add an authenticated, metadata-only diagnostic probe for the portal's `PED_Reading_Archive_Tab` Aura component.
+- Discover component/controller action descriptors without persisting or returning raw account values, meter indexes, CNP/CUI, cookies, or session material.
+- Expose the probe from the Home Assistant Ingress page so the real meter-index endpoint can be identified before any collector writes are added.
+
 ## 0.1.5
 
 - Extend rolling synchronization back to the day after the newest persisted meter timestamp when an outage gap falls outside the configured rolling window, bounded by `backfill_days`.
