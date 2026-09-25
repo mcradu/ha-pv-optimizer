@@ -70,6 +70,8 @@ For each definition it catalogs the component relationship, Apex action descript
 
 Discovery is read-only metadata inspection. It does **not** instantiate discovered components, invoke discovered Apex/business methods, call the Visualforce load-curve proxy, or write to InfluxDB. Therefore it does not consume the collector's local `FindOutMeterLoadData` request budget.
 
+From version 0.3.1 discovery runs asynchronously. The initial POST returns immediately, the Ingress page polls a lightweight status endpoint, and the sanitized final catalog is persisted to `/data/portal_api_discovery.json` and fetched only after the background crawl completes. This avoids proxy/browser timeouts during longer crawls.
+
 The resulting JSON is intended for offline filtering of the portal's exposed frontend surface. It is a catalog of what the authenticated frontend reveals, not a guarantee that Salesforce exposes a complete server-side API registry.
 
 ## Reading archive diagnostic
