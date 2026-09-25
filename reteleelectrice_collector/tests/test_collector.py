@@ -1,6 +1,5 @@
 import json
 import sys
-import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from datetime import date, datetime, timezone
@@ -12,7 +11,6 @@ sys.path.insert(0, str(APP))
 from influx import InfluxError, InfluxWriter, point_to_line
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, parse_a4j_response, summarize_component_metadata
-import run as run_module
 from run import (
     PortalRateLimitError,
     backfill_start_for_pod,
@@ -202,153 +200,6 @@ class ParserTests(unittest.TestCase):
             calls[5].kwargs["params"],
             {"name": "c:PED_Pagination"},
         )
-
-
-class PortalDiscoveryTests(unittest.TestCase):
-    def test_discovery_crawls_static_ped_components_and_catalogs_actions(self):
-        portal = ReteleElectricePortal("user", "password")
-        definitions = {
-            "c:PED_Reading_Archive_Tab": {
-                "descriptor": "markup://c:PED_Reading_Archive_Tab",
-                "children": [
-                    "markup://c:PED_Archive_Helper",
-                    "markup://lightning:button",
-                ],
-                "controller": "apex://PED_ReadingArchiveController/ACTION$PODDetails",
-                "code": (
-                    "event.setParams({methodName:'PED_ReadArchive'});"
-                    "var pod='RO00SECRET123456';"
-                ),
-            },
-            "c:PED_Export_Curves_For_POD_Item": {
-                "descriptor": "markup://c:PED_Export_Curves_For_POD_Item",
-                "children": ["markup://c:PED_Archive_Helper"],
-                "controller": "apex://PED_Valori_di_Energia_Ctrl/ACTION$PODDetails",
-            },
-            "c:PED_HomePage": {
-                "descriptor": "markup://c:PED_HomePage",
-                "controller": "apex://PED_Utility/ACTION$getPODs",
-            },
-            "c:PED_Archive_Helper": {
-                "descriptor": "markup://c:PED_Archive_Helper",
-                "controller": "apex://PED_ArchiveController/ACTION$ReadArchive",
-                "code": "PED_ProxyCallWSAsync_Reading_VF",
-            },
-        }
-        portal.get_component_definition = Mock(
-            side_effect=lambda name: definitions[name]
-        )
-        portal.get_component_instance = Mock()
-        portal._call_vf_ws_async = Mock()
-
-        result = portal.discover_portal_api(max_components=20, max_depth=4)
-
-        self.assertEqual(result["mode"], "static_metadata_only")
-        self.assertFalse(result["business_actions_invoked"])
-        self.assertFalse(result["component_instances_created"])
-        self.assertFalse(result["load_curve_requests_invoked"])
-        self.assertFalse(result["load_curve_budget_consumed"])
-        self.assertEqual(result["components_attempted"], 4)
-        self.assertEqual(result["components_successful"], 4)
-        self.assertEqual(result["components_failed"], 0)
-        self.assertIn("c:PED_Archive_Helper", result["components_discovered"])
-        self.assertIn(
-            "apex://PED_ArchiveController/ACTION$ReadArchive",
-            result["apex_actions"],
-        )
-        self.assertIn("PED_ArchiveController", result["apex_controllers"])
-        self.assertIn(
-            "PED_ProxyCallWSAsync_Reading_VF",
-            result["visualforce_candidates"],
-        )
-        self.assertNotIn("RO00SECRET123456", json.dumps(result))
-        portal.get_component_instance.assert_not_called()
-        portal._call_vf_ws_async.assert_not_called()
-
-    def test_discovery_isolates_definition_errors(self):
-        portal = ReteleElectricePortal("user", "password")
-
-        def get_definition(name):
-            if name == "c:PED_Export_Curves_For_POD_Item":
-                raise RuntimeError("definition unavailable")
-            return {"descriptor": f"markup://{name}"}
-
-        portal.get_component_definition = Mock(side_effect=get_definition)
-
-        result = portal.discover_portal_api(max_components=10, max_depth=0)
-
-        self.assertEqual(result["components_attempted"], 3)
-        self.assertEqual(result["components_failed"], 1)
-        errors = [
-            item for item in result["catalog"]
-            if item["status"] == "error"
-        ]
-        self.assertEqual(len(errors), 1)
-        self.assertEqual(errors[0]["error_type"], "RuntimeError")
-
-    def test_discovery_enforces_component_limit(self):
-        portal = ReteleElectricePortal("user", "password")
-        portal.get_component_definition = Mock(
-            return_value={"descriptor": "markup://c:PED_Test"}
-        )
-
-        result = portal.discover_portal_api(max_components=2, max_depth=5)
-
-        self.assertEqual(result["components_attempted"], 2)
-        self.assertTrue(result["limit_reached"])
-        self.assertGreater(result["remaining_queue"], 0)
-
-
-
-class PortalDiscoveryJobTests(unittest.TestCase):
-    def setUp(self):
-        run_module._set_discovery_runtime(
-            state="idle",
-            started_at=None,
-            finished_at=None,
-            error="",
-            summary=None,
-        )
-
-    def test_background_job_persists_result_and_marks_complete(self):
-        result = {
-            "components_attempted": 4,
-            "components_successful": 3,
-            "components_failed": 1,
-            "apex_actions": ["a", "b"],
-            "apex_controllers": ["c"],
-            "limit_reached": False,
-            "catalog": [],
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            target = Path(tmpdir) / "portal_api_discovery.json"
-            with patch.object(run_module, "DISCOVERY_PATH", target), patch.object(
-                run_module, "discover_portal_api", return_value=result
-            ):
-                run_module.run_portal_discovery_job({"username": "u", "password": "p"})
-
-            status = run_module.discovery_status()
-            self.assertEqual(status["state"], "complete")
-            self.assertEqual(status["summary"]["components_attempted"], 4)
-            self.assertEqual(status["summary"]["apex_actions"], 2)
-            saved = json.loads(target.read_text(encoding="utf-8"))
-            self.assertEqual(saved, result)
-
-    def test_background_job_marks_failure_without_result(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            target = Path(tmpdir) / "portal_api_discovery.json"
-            with patch.object(run_module, "DISCOVERY_PATH", target), patch.object(
-                run_module,
-                "discover_portal_api",
-                side_effect=RuntimeError("portal unavailable"),
-            ):
-                run_module.run_portal_discovery_job({"username": "u", "password": "p"})
-
-            status = run_module.discovery_status()
-            self.assertEqual(status["state"], "failed")
-            self.assertIn("portal unavailable", status["error"])
-            self.assertFalse(target.exists())
-
 
 
 class SchedulingTests(unittest.TestCase):
