@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3
+
+- Keep the targeted Reading Archive probe and make its Ingress UI inspect the raw HTTP body before JSON parsing.
+- When Home Assistant Ingress or the add-on returns non-JSON content, show the HTTP status and the first 2000 characters verbatim instead of only a JavaScript JSON parse error.
+
 ## 0.3.2
 
 - Remove the broad portal API discovery path and return to the previously working targeted Reading Archive probe.
