@@ -1,0 +1,51 @@
+name: Validate targeted probe rollback
+
+on:
+  push:
+    branches:
+      - fix/reteleelectrice-return-to-targeted-probe
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --quiet -r reteleelectrice_collector/requirements.txt pyyaml
+      - name: Run tests
+        run: |
+          cd reteleelectrice_collector
+          python -m unittest discover -s tests -v
+      - name: Compile
+        run: python -m py_compile reteleelectrice_collector/app/*.py
+      - name: Parse config
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          data=yaml.safe_load(Path("reteleelectrice_collector/config.yaml").read_text())
+          assert data["version"] == "0.3.2"
+          PY
+      - name: Assert targeted UI only
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text=Path("reteleelectrice_collector/app/run.py").read_text()
+          assert "Probe index archive" in text
+          assert "Discover portal API" not in text
+          assert "/api/probe-reading-archive" in text
+          assert "/api/discover-portal-api" not in text
+          PY
+      - name: Build image
+        run: docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.22 -t local/reteleelectrice-collector:targeted-probe reteleelectrice_collector
+      - name: Scope check
+        run: |
+          set -euo pipefail
+          git diff --name-only 3ac42570551ad347bf920aed3a5bf289e99b3e9f...HEAD > /tmp/files
+          cat /tmp/files
+          test "$(wc -l < /tmp/files)" -eq 7
