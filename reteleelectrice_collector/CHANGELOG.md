@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7
+
+- Extend the reading-archive probe with filtered identifier signals from component code and metadata.
+- Surface likely reading/index/service method names while keeping the response metadata-only.
+
 ## 0.1.6
 
 - Add an authenticated, metadata-only diagnostic probe for the portal's `PED_Reading_Archive_Tab` Aura component.
