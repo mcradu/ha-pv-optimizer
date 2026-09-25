@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4
+
+- Restore the exact compact targeted Reading Archive metadata summarizer from 0.2.1, which previously completed successfully in production.
+- Remove `static_code_contexts`, the 0.2.2 diagnostic expansion that can monopolize the Python process long enough for the Home Assistant watchdog health check to fail and restart the app.
+- Keep the 0.3.3 raw-response diagnostics in the Ingress UI.
+
 ## 0.3.3
 
 - Keep the targeted Reading Archive probe and make its Ingress UI inspect the raw HTTP body before JSON parsing.
