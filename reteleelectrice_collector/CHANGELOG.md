@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9
+
+- Add privacy-filtered identifier contexts around archive-related code signals so method names can be associated with nearby parameters and events.
+- Keep only approved structural identifiers and archive-related signals; raw component values remain excluded.
+
 ## 0.1.8
 
 - Extend the reading-archive diagnostic to inspect the definitions of the related async callback, date, and pagination Aura components.
