@@ -62,18 +62,6 @@ The portal returns `Q1...Qn` values and a frequency in minutes. The default `int
 
 Timestamps are converted from `Europe/Bucharest` to UTC before they are written. The conversion is monotonic across daylight-saving transitions and supports non-96-slot days.
 
-## Portal API discovery
-
-Version 0.3.0 adds **Discover portal API** to the Ingress page. The discovery operation authenticates normally, then crawls only static Aura component definitions starting from the known PED components used by the collector. It follows newly discovered `markup://c:PED_*` component references recursively, up to 60 component definitions and depth 5.
-
-For each definition it catalogs the component relationship, Apex action descriptors/controllers, PED-related identifier signals, Visualforce-like candidates, safe key/value relations, literal candidates, and sanitized static code contexts. Errors are isolated per component, and the response states whether the crawl hit its component limit.
-
-Discovery is read-only metadata inspection. It does **not** instantiate discovered components, invoke discovered Apex/business methods, call the Visualforce load-curve proxy, or write to InfluxDB. Therefore it does not consume the collector's local `FindOutMeterLoadData` request budget.
-
-From version 0.3.1 discovery runs asynchronously. The initial POST returns immediately, the Ingress page polls a lightweight status endpoint, and the sanitized final catalog is persisted to `/data/portal_api_discovery.json` and fetched only after the background crawl completes. This avoids proxy/browser timeouts during longer crawls.
-
-The resulting JSON is intended for offline filtering of the portal's exposed frontend surface. It is a catalog of what the authenticated frontend reveals, not a guarantee that Salesforce exposes a complete server-side API registry.
-
 ## Reading archive diagnostic
 
 Version 0.1.6 adds a temporary metadata-only probe for `c:PED_Reading_Archive_Tab`, the portal component behind the meter-reading archive. The probe authenticates with the existing account, requests the Aura component definition and instance metadata, and returns only structural dictionary keys, safe Aura/Apex/markup descriptors, and action names. Raw component values are discarded before the HTTP response is built. It does not write meter indexes to InfluxDB and does not call `FindOutMeterLoadData`, so it does not consume the collector's local load-curve request budget.
