@@ -10,7 +10,7 @@ sys.path.insert(0, str(APP))
 
 from influx import InfluxError, InfluxWriter, point_to_line
 from normalize import normalize_curve_payload
-from portal import ReteleElectricePortal, parse_a4j_response
+from portal import ReteleElectricePortal, parse_a4j_response, summarize_component_metadata
 from run import (
     PortalRateLimitError,
     backfill_start_for_pod,
@@ -50,6 +50,69 @@ class ParserTests(unittest.TestCase):
         value = {"items": [{"PodName": "RO00TESTPOD123456"}, {"other": "ignore"}]}
         self.assertEqual(
             ReteleElectricePortal._extract_pod_values(value), {"RO00TESTPOD123456"}
+        )
+
+    def test_component_metadata_probe_discards_account_values(self):
+        raw = {
+            "descriptor": "markup://c:PED_Reading_Archive_Tab",
+            "controller": {
+                "descriptor": "apex://PED_ServizidiMisuraController/ACTION$PODDetails",
+                "actionDefs": {
+                    "GetArchive": {
+                        "descriptor": "apex://PED_ServizidiMisuraController/ACTION$GetArchive"
+                    }
+                },
+            },
+            "accountData": {
+                "pod": "RO00SECRET123456",
+                "cnp": "1234567890123",
+                "index": "98765.432",
+            },
+        }
+        summary = summarize_component_metadata(raw)
+        serialized = json.dumps(summary)
+        self.assertIn("PODDetails", summary["action_names"])
+        self.assertIn("GetArchive", summary["action_names"])
+        self.assertIn("accountData", summary["schema_keys"])
+        self.assertNotIn("RO00SECRET123456", serialized)
+        self.assertNotIn("1234567890123", serialized)
+        self.assertNotIn("98765.432", serialized)
+
+    def test_reading_archive_probe_uses_component_controller_actions(self):
+        portal = ReteleElectricePortal("user", "password")
+        portal._aura_call = Mock(
+            side_effect=[
+                {
+                    "descriptor": "markup://c:PED_Reading_Archive_Tab",
+                    "controller": "apex://PED_ServizidiMisuraController/ACTION$ArchiveRows",
+                },
+                {
+                    "descriptor": "markup://c:PED_Reading_Archive_Tab",
+                    "controller": "apex://PED_ServizidiMisuraController/ACTION$PODDetails",
+                    "sensitive": "RO00SECRET123456",
+                },
+            ]
+        )
+
+        result = portal.probe_reading_archive_component()
+
+        self.assertEqual(result["component"], "c:PED_Reading_Archive_Tab")
+        self.assertEqual(
+            result["calling_descriptor"], "markup://c:PED_Reading_Archive_Tab"
+        )
+        self.assertIn("ArchiveRows", result["definition"]["action_names"])
+        self.assertIn("PODDetails", result["instance"]["action_names"])
+        self.assertNotIn("RO00SECRET123456", json.dumps(result))
+
+        calls = portal._aura_call.call_args_list
+        self.assertEqual(
+            calls[0].kwargs["descriptor"],
+            "aura://ComponentController/ACTION$getComponentDef",
+        )
+        self.assertEqual(calls[0].kwargs["params"], {"name": "c:PED_Reading_Archive_Tab"})
+        self.assertEqual(
+            calls[1].kwargs["descriptor"],
+            "aura://ComponentController/ACTION$getComponent",
         )
 
 
