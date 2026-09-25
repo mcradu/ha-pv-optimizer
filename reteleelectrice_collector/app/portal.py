@@ -22,6 +22,12 @@ AURA_URL = f"{BASE_URL}/s/sfsites/aura"
 CURVE_VF_PAGE = "PED_ProxyCallWSAsync_Curve_VF"
 READING_ARCHIVE_COMPONENT = "c:PED_Reading_Archive_Tab"
 READING_ARCHIVE_CALLING_DESCRIPTOR = "markup://c:PED_Reading_Archive_Tab"
+READING_ARCHIVE_RELATED_DEFINITIONS = (
+    "c:PED_CallWSAsyncEvent",
+    "c:PED_CallbackWSAsyncEvent",
+    "c:PED_Dates_event",
+    "c:PED_Pagination",
+)
 
 SAFE_DESCRIPTOR_RE = re.compile(
     r"(?:(?:apex|markup|aura)://[A-Za-z0-9_:.\-]+(?:/ACTION\$[A-Za-z0-9_]+)?)"
@@ -221,11 +227,22 @@ class ReteleElectricePortal:
         """Return metadata only; never return raw component/account values."""
         definition = self.get_component_definition(READING_ARCHIVE_COMPONENT)
         instance = self.get_component_instance(READING_ARCHIVE_COMPONENT)
+        related: dict[str, Any] = {}
+        for component_name in READING_ARCHIVE_RELATED_DEFINITIONS:
+            try:
+                related[component_name] = summarize_component_metadata(
+                    self.get_component_definition(component_name)
+                )
+            except Exception as exc:
+                related[component_name] = {
+                    "error_type": type(exc).__name__,
+                }
         return {
             "component": READING_ARCHIVE_COMPONENT,
             "calling_descriptor": READING_ARCHIVE_CALLING_DESCRIPTOR,
             "definition": summarize_component_metadata(definition),
             "instance": summarize_component_metadata(instance),
+            "related_definitions": related,
         }
 
     def get_load_curves(
