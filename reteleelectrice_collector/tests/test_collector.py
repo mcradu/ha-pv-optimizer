@@ -1,5 +1,6 @@
 import json
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from datetime import date, datetime, timezone
@@ -11,6 +12,7 @@ sys.path.insert(0, str(APP))
 from influx import InfluxError, InfluxWriter, point_to_line
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, parse_a4j_response, summarize_component_metadata
+import run as run_module
 from run import (
     PortalRateLimitError,
     backfill_start_for_pod,
@@ -295,6 +297,57 @@ class PortalDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["components_attempted"], 2)
         self.assertTrue(result["limit_reached"])
         self.assertGreater(result["remaining_queue"], 0)
+
+
+
+class PortalDiscoveryJobTests(unittest.TestCase):
+    def setUp(self):
+        run_module._set_discovery_runtime(
+            state="idle",
+            started_at=None,
+            finished_at=None,
+            error="",
+            summary=None,
+        )
+
+    def test_background_job_persists_result_and_marks_complete(self):
+        result = {
+            "components_attempted": 4,
+            "components_successful": 3,
+            "components_failed": 1,
+            "apex_actions": ["a", "b"],
+            "apex_controllers": ["c"],
+            "limit_reached": False,
+            "catalog": [],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "portal_api_discovery.json"
+            with patch.object(run_module, "DISCOVERY_PATH", target), patch.object(
+                run_module, "discover_portal_api", return_value=result
+            ):
+                run_module.run_portal_discovery_job({"username": "u", "password": "p"})
+
+            status = run_module.discovery_status()
+            self.assertEqual(status["state"], "complete")
+            self.assertEqual(status["summary"]["components_attempted"], 4)
+            self.assertEqual(status["summary"]["apex_actions"], 2)
+            saved = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(saved, result)
+
+    def test_background_job_marks_failure_without_result(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "portal_api_discovery.json"
+            with patch.object(run_module, "DISCOVERY_PATH", target), patch.object(
+                run_module,
+                "discover_portal_api",
+                side_effect=RuntimeError("portal unavailable"),
+            ):
+                run_module.run_portal_discovery_job({"username": "u", "password": "p"})
+
+            status = run_module.discovery_status()
+            self.assertEqual(status["state"], "failed")
+            self.assertIn("portal unavailable", status["error"])
+            self.assertFalse(target.exists())
 
 
 

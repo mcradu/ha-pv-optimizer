@@ -20,9 +20,10 @@ from influx import InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
+DISCOVERY_PATH = Path("/data/portal_api_discovery.json")
 HTTP_PORT = 8098
 PORTAL_MAX_CHUNK_DAYS = 31
 PORTAL_REQUEST_WINDOW = timedelta(hours=24)
@@ -52,7 +53,15 @@ DEFAULTS: dict[str, Any] = {
 
 STATUS_LOCK = threading.Lock()
 DIAGNOSTIC_LOCK = threading.Lock()
+DISCOVERY_STATE_LOCK = threading.Lock()
 MANUAL_SYNC = threading.Event()
+DISCOVERY_RUNTIME: dict[str, Any] = {
+    "state": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "error": "",
+    "summary": None,
+}
 RUNTIME: dict[str, Any] = {
     "version": VERSION,
     "state": "starting",
@@ -564,6 +573,99 @@ def discover_portal_api(options: dict[str, Any]) -> dict[str, Any]:
         portal.close()
 
 
+def _set_discovery_runtime(**values: Any) -> None:
+    with DISCOVERY_STATE_LOCK:
+        DISCOVERY_RUNTIME.update(values)
+
+
+def discovery_status() -> dict[str, Any]:
+    with DISCOVERY_STATE_LOCK:
+        return dict(DISCOVERY_RUNTIME)
+
+
+def save_discovery_result(result: dict[str, Any]) -> None:
+    DISCOVERY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = DISCOVERY_PATH.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    os.replace(tmp, DISCOVERY_PATH)
+
+
+def run_portal_discovery_job(options: dict[str, Any]) -> None:
+    started = utc_now().isoformat()
+    _set_discovery_runtime(
+        state="running",
+        started_at=started,
+        finished_at=None,
+        error="",
+        summary=None,
+    )
+    try:
+        result = discover_portal_api(options)
+        save_discovery_result(result)
+        summary = {
+            "components_attempted": result.get("components_attempted", 0),
+            "components_successful": result.get("components_successful", 0),
+            "components_failed": result.get("components_failed", 0),
+            "apex_actions": len(result.get("apex_actions", [])),
+            "apex_controllers": len(result.get("apex_controllers", [])),
+            "limit_reached": bool(result.get("limit_reached")),
+        }
+        _set_discovery_runtime(
+            state="complete",
+            finished_at=utc_now().isoformat(),
+            error="",
+            summary=summary,
+        )
+    except Exception as exc:
+        LOG.warning("Portal API discovery background job failed: %s", exc)
+        _set_discovery_runtime(
+            state="failed",
+            finished_at=utc_now().isoformat(),
+            error=str(exc),
+            summary=None,
+        )
+
+
+def _portal_discovery_worker(options: dict[str, Any]) -> None:
+    try:
+        run_portal_discovery_job(options)
+    finally:
+        DIAGNOSTIC_LOCK.release()
+
+
+def start_portal_discovery(options: dict[str, Any]) -> bool:
+    if not DIAGNOSTIC_LOCK.acquire(blocking=False):
+        return False
+    _set_discovery_runtime(
+        state="queued",
+        started_at=None,
+        finished_at=None,
+        error="",
+        summary=None,
+    )
+    thread = threading.Thread(
+        target=_portal_discovery_worker,
+        args=(dict(options),),
+        name="reteleelectrice-portal-discovery",
+        daemon=True,
+    )
+    try:
+        thread.start()
+    except Exception:
+        DIAGNOSTIC_LOCK.release()
+        _set_discovery_runtime(
+            state="failed",
+            finished_at=utc_now().isoformat(),
+            error="failed to start discovery worker",
+            summary=None,
+        )
+        raise
+    return True
+
+
 class StatusHandler(BaseHTTPRequestHandler):
     server_version = "ReteleElectriceCollector/0.1"
 
@@ -588,6 +690,23 @@ class StatusHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/status":
             self._send_json(safe_status(APP_OPTIONS))
+            return
+        if path == "/api/discover-portal-api":
+            self._send_json({"ok": True, **discovery_status()})
+            return
+        if path == "/api/discover-portal-api/result":
+            status = discovery_status()
+            if status.get("state") != "complete":
+                self._send_json(
+                    {"ok": False, "state": status.get("state"), "error": "result not ready"},
+                    409,
+                )
+                return
+            result = load_json(DISCOVERY_PATH, {})
+            if not result:
+                self._send_json({"ok": False, "error": "discovery result is missing"}, 404)
+                return
+            self._send_json({"ok": True, "result": result})
             return
         if path in {"/", ""}:
             body = PAGE.encode("utf-8")
@@ -620,17 +739,13 @@ class StatusHandler(BaseHTTPRequestHandler):
                 DIAGNOSTIC_LOCK.release()
             return
         if path == "/api/discover-portal-api":
-            if not DIAGNOSTIC_LOCK.acquire(blocking=False):
-                self._send_json({"error": "diagnostic operation already running"}, 409)
+            if not start_portal_discovery(APP_OPTIONS):
+                self._send_json(
+                    {"ok": False, "error": "portal discovery already running", **discovery_status()},
+                    409,
+                )
                 return
-            try:
-                result = discover_portal_api(APP_OPTIONS)
-                self._send_json({"ok": True, "result": result})
-            except Exception as exc:
-                LOG.warning("Portal API discovery failed: %s", exc)
-                self._send_json({"ok": False, "error": str(exc)}, 502)
-            finally:
-                DIAGNOSTIC_LOCK.release()
+            self._send_json({"ok": True, "accepted": True, **discovery_status()}, 202)
             return
         self._send_json({"error": "not found"}, 404)
 
@@ -653,7 +768,9 @@ const $=id=>document.getElementById(id);const fmt=v=>v?new Date(v).toLocaleStrin
 async function refresh(){try{const r=await fetch('api/status',{cache:'no-store'});const s=await r.json();$('state').textContent=s.state;$('success').textContent=fmt(s.last_success);$('latest').textContent=fmt(s.latest_data_timestamp);$('age').textContent=s.data_age_days==null?'—':`${s.data_age_days} days`;$('points').textContent=s.points_written??0;$('mode').textContent=s.sync_mode||'—';$('diag').textContent=JSON.stringify(s,null,2)}catch(e){$('state').textContent='disconnected'}}
 async function syncNow(){await fetch('api/sync',{method:'POST'});setTimeout(refresh,500)}
 async function probeArchive(){const b=$('probeBtn');b.disabled=true;$('archive').textContent='Probing authenticated Aura component metadata…';try{const r=await fetch('api/probe-reading-archive',{method:'POST'});const d=await r.json();$('archive').textContent=JSON.stringify(d,null,2)}catch(e){$('archive').textContent='Probe failed: '+e}finally{b.disabled=false}}
-async function discoverPortal(){const b=$('discoverBtn');b.disabled=true;$('discovery').textContent='Crawling static PED component definitions…';try{const r=await fetch('api/discover-portal-api',{method:'POST'});const d=await r.json();$('discovery').textContent=JSON.stringify(d,null,2)}catch(e){$('discovery').textContent='Discovery failed: '+e}finally{b.disabled=false}}
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function pollDiscovery(){for(;;){const r=await fetch('api/discover-portal-api',{cache:'no-store'});const d=await r.json();if(d.state==='complete'){const rr=await fetch('api/discover-portal-api/result',{cache:'no-store'});const full=await rr.json();$('discovery').textContent=JSON.stringify(full,null,2);return}if(d.state==='failed'){throw new Error(d.error||'portal discovery failed')}$('discovery').textContent='Discovery running… '+JSON.stringify(d.summary||{});await wait(1500)}}
+async function discoverPortal(){const b=$('discoverBtn');b.disabled=true;$('discovery').textContent='Starting static PED component discovery…';try{const r=await fetch('api/discover-portal-api',{method:'POST'});const d=await r.json();if(!r.ok&&d.state!=='running'){throw new Error(d.error||('HTTP '+r.status))}await pollDiscovery()}catch(e){$('discovery').textContent='Discovery failed: '+e}finally{b.disabled=false}}
 refresh();setInterval(refresh,5000);
 </script></body></html>"""
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- Run portal API discovery as a background job and return HTTP 202 immediately, avoiding Home Assistant Ingress/browser request timeouts.
+- Add polling endpoints for discovery status and final result.
+- Persist the sanitized discovery JSON to `/data/portal_api_discovery.json` after completion.
+- Share the diagnostic lock so archive probing and portal discovery cannot run concurrently.
+
 ## 0.3.0
 
 - Add **Discover portal API**, a static-metadata crawler that starts from known PED Aura components and recursively catalogs discovered `c:PED_*` component definitions.
