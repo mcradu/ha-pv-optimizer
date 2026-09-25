@@ -70,6 +70,8 @@ Use **Probe index archive** on the Ingress page once, then capture only the JSON
 
 From version 0.3.3 the probe UI reads the HTTP response body as text before attempting JSON parsing. If Ingress or the backend returns HTML/plain text instead of JSON, the panel shows the HTTP status and the first 2000 characters of that raw response so the proxy/backend failure can be diagnosed directly.
 
+Version 0.3.4 intentionally returns the metadata extraction itself to the compact 0.2.1 implementation. The later `static_code_contexts` expansion is removed because the production probe could hold the process busy long enough for the Home Assistant watchdog health request to fail and restart the app.
+
 ## Security
 
 The collector does not store Salesforce session cookies, ViewState tokens, CNP/CUI values, or passwords in its state file or logs. Authentication/session material lives only in process memory.
