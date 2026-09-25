@@ -65,6 +65,14 @@ SAFE_RELATION_KEYS = {
     "listaParam",
     "XML_Readings",
 }
+STATIC_CODE_ANCHORS = (
+    "methodName",
+    "sParameterName",
+    "listaParam",
+    "XML_Readings",
+    "typeOfReading",
+    "typeofenergy_measured",
+)
 SAFE_CONTEXT_IDENTIFIERS = {
     "get",
     "set",
@@ -529,6 +537,7 @@ def summarize_component_metadata(
     identifier_contexts: set[str] = set()
     safe_relations: set[str] = set()
     anchor_literal_candidates: set[str] = set()
+    static_code_contexts: set[str] = set()
 
     def is_signal(token: str) -> bool:
         lowered = token.lower()
@@ -578,6 +587,38 @@ def summarize_component_metadata(
                     ):
                         anchor_literal_candidates.add(f"{anchor}~{candidate}")
 
+    def sanitize_static_window(window: str) -> str:
+        window = re.sub(r"RO[0-9A-Z]{10,30}", "<pod>", window, flags=re.I)
+        window = re.sub(r"\b\d{6,}\b", "<num>", window)
+        window = re.sub(
+            r"(?<![A-Za-z0-9])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9])",
+            "<token>",
+            window,
+        )
+
+        def replace_string(match: re.Match[str]) -> str:
+            quote = match.group(1)
+            body = match.group(2)
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$.-]{0,95}", body):
+                if re.fullmatch(r"RO[0-9A-Z]{10,30}", body, re.I):
+                    return f"{quote}<pod>{quote}"
+                return f"{quote}{body}{quote}"
+            return f"{quote}<str>{quote}"
+
+        window = re.sub(r"""(["'])((?:\\.|(?!\1).)*?)\1""", replace_string, window)
+        return re.sub(r"\s+", " ", window).strip()
+
+    def collect_static_code_contexts(text: str) -> None:
+        if not include_literal_candidates:
+            return
+        for anchor in STATIC_CODE_ANCHORS:
+            for match in re.finditer(rf"\b{re.escape(anchor)}\b", text):
+                start = max(0, match.start() - 320)
+                end = min(len(text), match.end() + 420)
+                snippet = sanitize_static_window(text[start:end])
+                if snippet:
+                    static_code_contexts.add(f"{anchor}: {snippet[:900]}")
+
     def collect_identifier_contexts(text: str) -> None:
         tokens = SAFE_IDENTIFIER_RE.findall(text)
         if not tokens:
@@ -619,6 +660,7 @@ def summarize_component_metadata(
         collect_identifier_contexts(node)
         collect_safe_relations(node)
         collect_anchor_literal_candidates(node)
+        collect_static_code_contexts(node)
 
     walk(value)
     return {
@@ -629,6 +671,7 @@ def summarize_component_metadata(
         "identifier_contexts": sorted(identifier_contexts),
         "safe_relations": sorted(safe_relations),
         "anchor_literal_candidates": sorted(anchor_literal_candidates),
+        "static_code_contexts": sorted(static_code_contexts),
     }
 
 
