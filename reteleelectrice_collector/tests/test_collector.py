@@ -99,7 +99,7 @@ class ParserTests(unittest.TestCase):
                 },
                 {
                     "descriptor": "markup://c:PED_CallWSAsyncEvent",
-                    "attribute": "methodName",
+                    "methodName": "ReadArchiveService",
                 },
                 {
                     "descriptor": "markup://c:PED_CallbackWSAsyncEvent",
