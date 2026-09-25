@@ -1,0 +1,41 @@
+name: Validate reading archive event probes
+
+on:
+  push:
+    branches:
+      - diagnostic/reteleelectrice-reading-archive-events
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --quiet -r reteleelectrice_collector/requirements.txt pyyaml
+      - name: Run tests
+        run: |
+          cd reteleelectrice_collector
+          python -m unittest discover -s tests -v
+      - name: Compile
+        run: python -m py_compile reteleelectrice_collector/app/*.py
+      - name: Parse config
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          data = yaml.safe_load(Path("reteleelectrice_collector/config.yaml").read_text())
+          assert data["version"] == "0.1.8"
+          PY
+      - name: Build image
+        run: docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.22 -t local/reteleelectrice-collector:events reteleelectrice_collector
+      - name: Scope check
+        run: |
+          set -euo pipefail
+          git diff --name-only e4e9ec59680b16e0195387d3f3a072367e529d71...HEAD > /tmp/files
+          cat /tmp/files
+          test "$(wc -l < /tmp/files)" -eq 6
