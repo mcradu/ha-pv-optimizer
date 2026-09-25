@@ -53,7 +53,6 @@ DEFAULTS: dict[str, Any] = {
 
 STATUS_LOCK = threading.Lock()
 DIAGNOSTIC_LOCK = threading.Lock()
-DISCOVERY_LOCK = threading.Lock()
 DISCOVERY_STATE_LOCK = threading.Lock()
 MANUAL_SYNC = threading.Event()
 DISCOVERY_RUNTIME: dict[str, Any] = {
@@ -634,19 +633,36 @@ def _portal_discovery_worker(options: dict[str, Any]) -> None:
     try:
         run_portal_discovery_job(options)
     finally:
-        DISCOVERY_LOCK.release()
+        DIAGNOSTIC_LOCK.release()
 
 
 def start_portal_discovery(options: dict[str, Any]) -> bool:
-    if not DISCOVERY_LOCK.acquire(blocking=False):
+    if not DIAGNOSTIC_LOCK.acquire(blocking=False):
         return False
+    _set_discovery_runtime(
+        state="queued",
+        started_at=None,
+        finished_at=None,
+        error="",
+        summary=None,
+    )
     thread = threading.Thread(
         target=_portal_discovery_worker,
         args=(dict(options),),
         name="reteleelectrice-portal-discovery",
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        DIAGNOSTIC_LOCK.release()
+        _set_discovery_runtime(
+            state="failed",
+            finished_at=utc_now().isoformat(),
+            error="failed to start discovery worker",
+            summary=None,
+        )
+        raise
     return True
 
 
