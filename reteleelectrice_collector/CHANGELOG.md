@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Add privacy-filtered key/value relations for archive metadata such as `methodName=...` and `sParameterName=...`.
+- Only expose relation values that are structural identifiers or archive-related signals; raw PODs, readings, dates, and account identifiers remain excluded.
+
 ## 0.1.9
 
 - Add privacy-filtered identifier contexts around archive-related code signals so method names can be associated with nearby parameters and events.

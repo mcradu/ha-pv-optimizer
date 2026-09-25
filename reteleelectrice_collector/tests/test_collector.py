@@ -70,7 +70,10 @@ class ParserTests(unittest.TestCase):
             },
         }
         raw["controllerCode"] = (
-            "function loadArchive(){callAsync('FindOutMeterReadingData');"
+            "function loadArchive(){"
+            "event.setParams({methodName:'PED_csvReadArchiveEAP'});"
+            "item.sParameterName='podId';"
+            "callAsync('FindOutMeterReadingData');"
             "var pod='RO00SECRET123456';}"
         )
         summary = summarize_component_metadata(raw)
@@ -88,6 +91,11 @@ class ParserTests(unittest.TestCase):
                 for context in summary["identifier_contexts"]
             )
         )
+        self.assertIn(
+            "methodName=PED_csvReadArchiveEAP",
+            summary["safe_relations"],
+        )
+        self.assertIn("sParameterName=podId", summary["safe_relations"])
         self.assertNotIn("RO00SECRET123456", serialized)
         self.assertNotIn("1234567890123", serialized)
         self.assertNotIn("98765.432", serialized)

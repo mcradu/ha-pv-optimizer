@@ -54,6 +54,14 @@ SAFE_SIGNAL_KEYWORDS = (
     "telecit",
     "pod",
 )
+SAFE_RELATION_KEYS = {
+    "methodName",
+    "sParameterName",
+    "typeOfReading",
+    "typeofenergy_measured",
+    "listaParam",
+    "XML_Readings",
+}
 SAFE_CONTEXT_IDENTIFIERS = {
     "get",
     "set",
@@ -509,6 +517,7 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
     action_names: set[str] = set()
     identifier_signals: set[str] = set()
     identifier_contexts: set[str] = set()
+    safe_relations: set[str] = set()
 
     def is_signal(token: str) -> bool:
         lowered = token.lower()
@@ -521,6 +530,21 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
             if re.fullmatch(r"RO[0-9A-Z]{10,30}", token, re.I):
                 continue
             identifier_signals.add(token)
+
+    def collect_safe_relations(text: str) -> None:
+        for key in SAFE_RELATION_KEYS:
+            patterns = (
+                rf'{re.escape(key)}\s*[:=]\s*["\']([A-Za-z_][A-Za-z0-9_$.-]{{1,95}})["\']',
+                rf'["\']{re.escape(key)}["\']\s*[,)]?\s*[,=:]\s*["\']([A-Za-z_][A-Za-z0-9_$.-]{{1,95}})["\']',
+                rf'{re.escape(key)}[^\n]{{0,80}}?["\']([A-Za-z_][A-Za-z0-9_$.-]{{1,95}})["\']',
+            )
+            for pattern in patterns:
+                for match in re.finditer(pattern, text):
+                    value = match.group(1)
+                    if re.fullmatch(r"RO[0-9A-Z]{10,30}", value, re.I):
+                        continue
+                    if value in SAFE_CONTEXT_IDENTIFIERS or is_signal(value):
+                        safe_relations.add(f"{key}={value}")
 
     def collect_identifier_contexts(text: str) -> None:
         tokens = SAFE_IDENTIFIER_RE.findall(text)
@@ -561,6 +585,7 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
                 action_names.add(descriptor.rsplit("/ACTION$", 1)[1])
         collect_identifier_signals(node)
         collect_identifier_contexts(node)
+        collect_safe_relations(node)
 
     walk(value)
     return {
@@ -569,6 +594,7 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
         "action_names": sorted(action_names),
         "identifier_signals": sorted(identifier_signals),
         "identifier_contexts": sorted(identifier_contexts),
+        "safe_relations": sorted(safe_relations),
     }
 
 
