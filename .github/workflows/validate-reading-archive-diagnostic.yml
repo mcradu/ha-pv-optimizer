@@ -39,7 +39,7 @@ jobs:
           PY
 
       - name: Build collector image
-        run: docker build -t local/reteleelectrice-collector:diag reteleelectrice_collector
+        run: docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.13-alpine3.22 -t local/reteleelectrice-collector:diag reteleelectrice_collector
 
       - name: Scope check
         run: |
