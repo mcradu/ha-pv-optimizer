@@ -108,7 +108,7 @@ class ParserTests(unittest.TestCase):
                 RuntimeError("dates event unavailable"),
                 {
                     "descriptor": "markup://c:PED_Pagination",
-                    "attribute": "currentPage",
+                    "currentPage": 1,
                 },
             ]
         )
