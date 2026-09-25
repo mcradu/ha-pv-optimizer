@@ -202,6 +202,102 @@ class ParserTests(unittest.TestCase):
         )
 
 
+class PortalDiscoveryTests(unittest.TestCase):
+    def test_discovery_crawls_static_ped_components_and_catalogs_actions(self):
+        portal = ReteleElectricePortal("user", "password")
+        definitions = {
+            "c:PED_Reading_Archive_Tab": {
+                "descriptor": "markup://c:PED_Reading_Archive_Tab",
+                "children": [
+                    "markup://c:PED_Archive_Helper",
+                    "markup://lightning:button",
+                ],
+                "controller": "apex://PED_ReadingArchiveController/ACTION$PODDetails",
+                "code": (
+                    "event.setParams({methodName:'PED_ReadArchive'});"
+                    "var pod='RO00SECRET123456';"
+                ),
+            },
+            "c:PED_Export_Curves_For_POD_Item": {
+                "descriptor": "markup://c:PED_Export_Curves_For_POD_Item",
+                "children": ["markup://c:PED_Archive_Helper"],
+                "controller": "apex://PED_Valori_di_Energia_Ctrl/ACTION$PODDetails",
+            },
+            "c:PED_HomePage": {
+                "descriptor": "markup://c:PED_HomePage",
+                "controller": "apex://PED_Utility/ACTION$getPODs",
+            },
+            "c:PED_Archive_Helper": {
+                "descriptor": "markup://c:PED_Archive_Helper",
+                "controller": "apex://PED_ArchiveController/ACTION$ReadArchive",
+                "code": "PED_ProxyCallWSAsync_Reading_VF",
+            },
+        }
+        portal.get_component_definition = Mock(
+            side_effect=lambda name: definitions[name]
+        )
+        portal.get_component_instance = Mock()
+        portal._call_vf_ws_async = Mock()
+
+        result = portal.discover_portal_api(max_components=20, max_depth=4)
+
+        self.assertEqual(result["mode"], "static_metadata_only")
+        self.assertFalse(result["business_actions_invoked"])
+        self.assertFalse(result["component_instances_created"])
+        self.assertFalse(result["load_curve_requests_invoked"])
+        self.assertFalse(result["load_curve_budget_consumed"])
+        self.assertEqual(result["components_attempted"], 4)
+        self.assertEqual(result["components_successful"], 4)
+        self.assertEqual(result["components_failed"], 0)
+        self.assertIn("c:PED_Archive_Helper", result["components_discovered"])
+        self.assertIn(
+            "apex://PED_ArchiveController/ACTION$ReadArchive",
+            result["apex_actions"],
+        )
+        self.assertIn("PED_ArchiveController", result["apex_controllers"])
+        self.assertIn(
+            "PED_ProxyCallWSAsync_Reading_VF",
+            result["visualforce_candidates"],
+        )
+        self.assertNotIn("RO00SECRET123456", json.dumps(result))
+        portal.get_component_instance.assert_not_called()
+        portal._call_vf_ws_async.assert_not_called()
+
+    def test_discovery_isolates_definition_errors(self):
+        portal = ReteleElectricePortal("user", "password")
+
+        def get_definition(name):
+            if name == "c:PED_Export_Curves_For_POD_Item":
+                raise RuntimeError("definition unavailable")
+            return {"descriptor": f"markup://{name}"}
+
+        portal.get_component_definition = Mock(side_effect=get_definition)
+
+        result = portal.discover_portal_api(max_components=10, max_depth=0)
+
+        self.assertEqual(result["components_attempted"], 3)
+        self.assertEqual(result["components_failed"], 1)
+        errors = [
+            item for item in result["catalog"]
+            if item["status"] == "error"
+        ]
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["error_type"], "RuntimeError")
+
+    def test_discovery_enforces_component_limit(self):
+        portal = ReteleElectricePortal("user", "password")
+        portal.get_component_definition = Mock(
+            return_value={"descriptor": "markup://c:PED_Test"}
+        )
+
+        result = portal.discover_portal_api(max_components=2, max_depth=5)
+
+        self.assertEqual(result["components_attempted"], 2)
+        self.assertTrue(result["limit_reached"])
+        self.assertGreater(result["remaining_queue"], 0)
+
+
+
 class SchedulingTests(unittest.TestCase):
     def test_backfill_ends_yesterday(self):
         options = {"backfill_days": 365, "rolling_days": 7}

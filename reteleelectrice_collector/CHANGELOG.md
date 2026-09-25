@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Add **Discover portal API**, a static-metadata crawler that starts from known PED Aura components and recursively catalogs discovered `c:PED_*` component definitions.
+- Catalog Apex action descriptors/controllers, child components, archive/service identifier signals, Visualforce-like candidates, safe relations, literal candidates, and sanitized static code contexts.
+- Never instantiate discovered components and never execute discovered Apex/business methods or the Visualforce load-curve proxy; discovery does not consume the local `FindOutMeterLoadData` request budget.
+- Bound discovery to 60 components and depth 5, with per-component error isolation and explicit truncation status.
+
 ## 0.2.2
 
 - Add sanitized static code contexts around archive anchors such as `methodName`, `sParameterName`, `listaParam`, and `XML_Readings`.
