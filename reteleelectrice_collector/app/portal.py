@@ -54,6 +54,34 @@ SAFE_SIGNAL_KEYWORDS = (
     "telecit",
     "pod",
 )
+SAFE_CONTEXT_IDENTIFIERS = {
+    "get",
+    "set",
+    "setParams",
+    "fire",
+    "push",
+    "concat",
+    "method",
+    "methodName",
+    "name",
+    "value",
+    "values",
+    "listaParam",
+    "sParameterName",
+    "start",
+    "end",
+    "podId",
+    "podVal",
+    "typeOfReading",
+    "typeofenergy_measured",
+    "XML_Readings",
+    "currentPage",
+    "pageSize",
+    "objectList",
+    "componentService",
+    "event",
+    "callback",
+}
 
 # Current Experience Cloud Aura identifiers. They are intentionally isolated here so
 # a portal deployment can be updated without touching the collector logic.
@@ -480,15 +508,37 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
     descriptors: set[str] = set()
     action_names: set[str] = set()
     identifier_signals: set[str] = set()
+    identifier_contexts: set[str] = set()
+
+    def is_signal(token: str) -> bool:
+        lowered = token.lower()
+        return any(keyword in lowered for keyword in SAFE_SIGNAL_KEYWORDS)
 
     def collect_identifier_signals(text: str) -> None:
         for token in SAFE_IDENTIFIER_RE.findall(text):
-            lowered = token.lower()
-            if not any(keyword in lowered for keyword in SAFE_SIGNAL_KEYWORDS):
+            if not is_signal(token):
                 continue
             if re.fullmatch(r"RO[0-9A-Z]{10,30}", token, re.I):
                 continue
             identifier_signals.add(token)
+
+    def collect_identifier_contexts(text: str) -> None:
+        tokens = SAFE_IDENTIFIER_RE.findall(text)
+        if not tokens:
+            return
+        for index, token in enumerate(tokens):
+            if not is_signal(token):
+                continue
+            start = max(0, index - 6)
+            end = min(len(tokens), index + 7)
+            safe_tokens = [
+                item
+                for item in tokens[start:end]
+                if item in SAFE_CONTEXT_IDENTIFIERS or is_signal(item)
+            ]
+            if len(safe_tokens) < 2:
+                continue
+            identifier_contexts.add(" ".join(safe_tokens))
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
@@ -510,6 +560,7 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
             if "/ACTION$" in descriptor:
                 action_names.add(descriptor.rsplit("/ACTION$", 1)[1])
         collect_identifier_signals(node)
+        collect_identifier_contexts(node)
 
     walk(value)
     return {
@@ -517,6 +568,7 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
         "descriptors": sorted(descriptors),
         "action_names": sorted(action_names),
         "identifier_signals": sorted(identifier_signals),
+        "identifier_contexts": sorted(identifier_contexts),
     }
 
 
