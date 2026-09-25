@@ -34,6 +34,9 @@ SAFE_DESCRIPTOR_RE = re.compile(
 )
 SAFE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.:-]{0,127}$")
 SAFE_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]{2,95}")
+SAFE_LITERAL_IDENTIFIER_RE = re.compile(
+    r"""(?P<quote>["'])(?P<value>[A-Za-z_][A-Za-z0-9_$.-]{1,95})(?P=quote)"""
+)
 SAFE_SIGNAL_KEYWORDS = (
     "read",
     "archive",
@@ -267,7 +270,8 @@ class ReteleElectricePortal:
         for component_name in READING_ARCHIVE_RELATED_DEFINITIONS:
             try:
                 related[component_name] = summarize_component_metadata(
-                    self.get_component_definition(component_name)
+                    self.get_component_definition(component_name),
+                    include_literal_candidates=True,
                 )
             except Exception as exc:
                 related[component_name] = {
@@ -276,7 +280,10 @@ class ReteleElectricePortal:
         return {
             "component": READING_ARCHIVE_COMPONENT,
             "calling_descriptor": READING_ARCHIVE_CALLING_DESCRIPTOR,
-            "definition": summarize_component_metadata(definition),
+            "definition": summarize_component_metadata(
+                definition,
+                include_literal_candidates=True,
+            ),
             "instance": summarize_component_metadata(instance),
             "related_definitions": related,
         }
@@ -505,7 +512,10 @@ class ReteleElectricePortal:
         return bool(re.fullmatch(r"RO[0-9A-Z]{10,30}", value.strip(), re.I))
 
 
-def summarize_component_metadata(value: Any) -> dict[str, Any]:
+def summarize_component_metadata(
+    value: Any,
+    include_literal_candidates: bool = False,
+) -> dict[str, Any]:
     """Extract only structural metadata safe to expose in diagnostics.
 
     Raw component payloads can contain account-specific values. This function
@@ -518,6 +528,7 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
     identifier_signals: set[str] = set()
     identifier_contexts: set[str] = set()
     safe_relations: set[str] = set()
+    anchor_literal_candidates: set[str] = set()
 
     def is_signal(token: str) -> bool:
         lowered = token.lower()
@@ -545,6 +556,27 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
                         continue
                     if value in SAFE_CONTEXT_IDENTIFIERS or is_signal(value):
                         safe_relations.add(f"{key}={value}")
+
+    def collect_anchor_literal_candidates(text: str) -> None:
+        if not include_literal_candidates:
+            return
+        for anchor in SAFE_RELATION_KEYS:
+            for anchor_match in re.finditer(rf"\b{re.escape(anchor)}\b", text):
+                start = max(0, anchor_match.start() - 180)
+                end = min(len(text), anchor_match.end() + 220)
+                window = text[start:end]
+                for literal_match in SAFE_LITERAL_IDENTIFIER_RE.finditer(window):
+                    candidate = literal_match.group("value")
+                    if candidate == anchor:
+                        continue
+                    if re.fullmatch(r"RO[0-9A-Z]{10,30}", candidate, re.I):
+                        continue
+                    if (
+                        candidate in SAFE_CONTEXT_IDENTIFIERS
+                        or candidate.startswith("PED_")
+                        or is_signal(candidate)
+                    ):
+                        anchor_literal_candidates.add(f"{anchor}~{candidate}")
 
     def collect_identifier_contexts(text: str) -> None:
         tokens = SAFE_IDENTIFIER_RE.findall(text)
@@ -586,6 +618,7 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
         collect_identifier_signals(node)
         collect_identifier_contexts(node)
         collect_safe_relations(node)
+        collect_anchor_literal_candidates(node)
 
     walk(value)
     return {
@@ -595,6 +628,7 @@ def summarize_component_metadata(value: Any) -> dict[str, Any]:
         "identifier_signals": sorted(identifier_signals),
         "identifier_contexts": sorted(identifier_contexts),
         "safe_relations": sorted(safe_relations),
+        "anchor_literal_candidates": sorted(anchor_literal_candidates),
     }
 
 
