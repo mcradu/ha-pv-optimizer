@@ -68,6 +68,8 @@ Version 0.1.6 adds a temporary metadata-only probe for `c:PED_Reading_Archive_Ta
 
 Use **Probe index archive** on the Ingress page once, then capture only the JSON shown in the Reading archive probe panel. That JSON is designed to exclude POD values, CNP/CUI, meter indexes, passwords, cookies, ViewState, and Aura tokens.
 
+From version 0.3.3 the probe UI reads the HTTP response body as text before attempting JSON parsing. If Ingress or the backend returns HTML/plain text instead of JSON, the panel shows the HTTP status and the first 2000 characters of that raw response so the proxy/backend failure can be diagnosed directly.
+
 ## Security
 
 The collector does not store Salesforce session cookies, ViewState tokens, CNP/CUI values, or passwords in its state file or logs. Authentication/session material lives only in process memory.
