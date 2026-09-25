@@ -107,6 +107,21 @@ class ParserTests(unittest.TestCase):
             "sParameterName~podId",
             summary["anchor_literal_candidates"],
         )
+        self.assertTrue(
+            any(
+                "methodName" in context
+                and "PED_csvReadArchiveEAP" in context
+                for context in summary["target_token_contexts"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "sParameterName" in context
+                and "podId" in context
+                for context in summary["target_token_contexts"]
+            )
+        )
+        self.assertLessEqual(len(summary["target_token_contexts"]), 24)
         self.assertNotIn("RO00SECRET123456", serialized)
         self.assertNotIn("1234567890123", serialized)
         self.assertNotIn("98765.432", serialized)
@@ -118,6 +133,7 @@ class ParserTests(unittest.TestCase):
         }
         summary = summarize_component_metadata(raw)
         self.assertEqual(summary["anchor_literal_candidates"], [])
+        self.assertEqual(summary["target_token_contexts"], [])
 
     def test_reading_archive_probe_uses_component_controller_actions(self):
         portal = ReteleElectricePortal("user", "password")

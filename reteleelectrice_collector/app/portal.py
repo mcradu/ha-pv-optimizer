@@ -65,6 +65,16 @@ SAFE_RELATION_KEYS = {
     "listaParam",
     "XML_Readings",
 }
+TARGET_TOKEN_ANCHORS = {
+    "methodName",
+    "sParameterName",
+    "listaParam",
+    "XML_Readings",
+    "typeOfReading",
+    "typeofenergy_measured",
+}
+TARGET_TOKEN_CONTEXT_LIMIT = 24
+TARGET_TOKEN_RADIUS = 10
 SAFE_CONTEXT_IDENTIFIERS = {
     "get",
     "set",
@@ -529,6 +539,8 @@ def summarize_component_metadata(
     identifier_contexts: set[str] = set()
     safe_relations: set[str] = set()
     anchor_literal_candidates: set[str] = set()
+    target_token_contexts: list[str] = []
+    target_token_seen: set[str] = set()
 
     def is_signal(token: str) -> bool:
         lowered = token.lower()
@@ -583,6 +595,24 @@ def summarize_component_metadata(
         if not tokens:
             return
         for index, token in enumerate(tokens):
+            if (
+                include_literal_candidates
+                and token in TARGET_TOKEN_ANCHORS
+                and len(target_token_contexts) < TARGET_TOKEN_CONTEXT_LIMIT
+            ):
+                start = max(0, index - TARGET_TOKEN_RADIUS)
+                end = min(len(tokens), index + TARGET_TOKEN_RADIUS + 1)
+                context_tokens = [
+                    "<pod>"
+                    if re.fullmatch(r"RO[0-9A-Z]{10,30}", item, re.I)
+                    else item
+                    for item in tokens[start:end]
+                ]
+                context = " ".join(context_tokens)
+                if context not in target_token_seen:
+                    target_token_seen.add(context)
+                    target_token_contexts.append(context)
+
             if not is_signal(token):
                 continue
             start = max(0, index - 6)
@@ -629,6 +659,7 @@ def summarize_component_metadata(
         "identifier_contexts": sorted(identifier_contexts),
         "safe_relations": sorted(safe_relations),
         "anchor_literal_candidates": sorted(anchor_literal_candidates),
+        "target_token_contexts": target_token_contexts,
     }
 
 

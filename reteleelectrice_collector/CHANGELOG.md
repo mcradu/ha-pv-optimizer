@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.5
+
+- Add bounded `target_token_contexts` around archive anchors such as `methodName`, `listaParam`, `sParameterName`, `XML_Readings`, `typeOfReading`, and `typeofenergy_measured`.
+- Reuse the existing identifier tokenization, keep at most 24 contexts, and redact POD-shaped tokens.
+- Do not restore the expensive raw static code-window extraction removed in 0.3.4.
+
 ## 0.3.4
 
 - Restore the exact compact targeted Reading Archive metadata summarizer from 0.2.1, which previously completed successfully in production.
