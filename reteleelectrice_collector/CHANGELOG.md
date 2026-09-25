@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Remove the broad portal API discovery path and return to the previously working targeted Reading Archive probe.
+- Restore the 0.2.2 diagnostic implementation and Ingress UI, keeping only **Probe index archive** and **Sync now**.
+- Keep the version monotonic so Home Assistant can upgrade cleanly from 0.3.1.
+
 ## 0.3.1
 
 - Run portal API discovery as a background job and return HTTP 202 immediately, avoiding Home Assistant Ingress/browser request timeouts.
