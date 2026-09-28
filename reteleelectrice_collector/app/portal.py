@@ -422,7 +422,15 @@ class ReteleElectricePortal:
             post_data["com.salesforce.visualforce.ViewStateCSRF"] = viewstate_csrf
 
         post_url = urljoin(BASE_URL, form_action)
-        LOG.info("Fetching load curves from %s to %s", method_params[3], method_params[4])
+        if len(method_params) >= 5:
+            LOG.info(
+                "Calling portal service %s for range %s to %s",
+                method_name,
+                method_params[3],
+                method_params[4],
+            )
+        else:
+            LOG.info("Calling portal service %s", method_name)
         post_response = self.session.post(
             post_url,
             data=post_data,
@@ -435,9 +443,14 @@ class ReteleElectricePortal:
             timeout=max(self.timeout, 60),
         )
         if post_response.status_code >= 400:
+            range_text = (
+                f" for range {method_params[3]}..{method_params[4]}"
+                if len(method_params) >= 5
+                else ""
+            )
             raise PortalError(
-                f"Visualforce {method_name} returned HTTP {post_response.status_code} "
-                f"for range {method_params[3]}..{method_params[4]}"
+                f"Visualforce {method_name} returned HTTP {post_response.status_code}"
+                f"{range_text}"
             )
         return parse_a4j_response(post_response.text)
 
