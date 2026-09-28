@@ -20,12 +20,13 @@ from influx import InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
-VERSION = "0.3.5"
+VERSION = "0.4.0"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
 PORTAL_MAX_CHUNK_DAYS = 31
 PORTAL_REQUEST_WINDOW = timedelta(hours=24)
+READING_ARCHIVE_LOOKBACK_DAYS = 400
 HA_API_URL = "http://supervisor/core/api/services/persistent_notification"
 STALE_NOTIFICATION_ID = "reteleelectrice_collector_data_stale"
 LOG = logging.getLogger("reteleelectrice_collector")
@@ -44,6 +45,7 @@ DEFAULTS: dict[str, Any] = {
     "influxdb_database": "home_assistant",
     "influxdb_retention_policy": "one_year",
     "influxdb_measurement": "reteleelectrice_meter_15m",
+    "influxdb_index_measurement": "reteleelectrice_meter_index",
     "influxdb_username": "",
     "influxdb_password": "",
     "stale_after_days": 5,
@@ -69,6 +71,7 @@ RUNTIME: dict[str, Any] = {
     "data_fresh": None,
     "freshness_source": None,
     "freshness_query_error": "",
+    "latest_meter_readings": {},
 }
 
 
@@ -300,6 +303,103 @@ def resolve_latest_timestamp(
     return latest, "influx_query", ""
 
 
+def _reading_number(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    if not isinstance(value, str):
+        return None
+    text = value.strip().replace("\u00a0", "").replace(" ", "")
+    if not text:
+        return None
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _reading_datetime(value: Any, timezone_name: str) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    timezone_local = ZoneInfo(timezone_name)
+    for pattern in (
+        "%d.%m.%Y %H:%M:%S",
+        "%d.%m.%Y %H:%M",
+        "%d.%m.%Y",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+    ):
+        try:
+            return datetime.strptime(text, pattern).replace(tzinfo=timezone_local)
+        except ValueError:
+            pass
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone_local) if parsed.tzinfo is None else parsed.astimezone(timezone_local)
+
+
+def latest_meter_index(
+    payload: dict[str, Any],
+    pod: str,
+    timezone_name: str,
+) -> dict[str, Any] | None:
+    readings = payload.get("XML_Readings")
+    if not isinstance(readings, list):
+        return None
+
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
+    for reading in readings:
+        if not isinstance(reading, dict):
+            continue
+        reading_dt = _reading_datetime(reading.get("measureDate"), timezone_name)
+        if reading_dt is not None:
+            candidates.append((reading_dt, reading))
+    if not candidates:
+        return None
+
+    reading_dt, latest = max(candidates, key=lambda item: item[0])
+    meters = latest.get("meter")
+    if not isinstance(meters, list):
+        meters = []
+
+    values: dict[str, float] = {}
+    for meter in meters:
+        if not isinstance(meter, dict):
+            continue
+        energy_type = str(meter.get("typeofenergy_measured") or "").strip().upper()
+        if energy_type not in {"EA", "EAP"}:
+            continue
+        number = _reading_number(meter.get("Value"))
+        if number is not None:
+            values[energy_type] = number
+
+    if "EA" not in values and "EAP" not in values:
+        return None
+
+    return {
+        "pod": pod,
+        "timestamp": int(reading_dt.astimezone(timezone.utc).timestamp()),
+        "measure_date": str(latest.get("measureDate") or ""),
+        "reading_type": str(latest.get("typeOfReading") or ""),
+        "meter_serial": str(latest.get("SerialNumber") or ""),
+        "constant": str(latest.get("constanta") or ""),
+        "import_index_kwh": values.get("EA"),
+        "export_index_kwh": values.get("EAP"),
+    }
+
+
 def selected_pods(portal: ReteleElectricePortal, pod_option: str) -> list[str]:
     configured = [value.strip() for value in pod_option.split(",") if value.strip()]
     if configured:
@@ -372,6 +472,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
     latest_accepted_epoch: int | None = None
     freshness_source = ""
     freshness_query_error = ""
+    latest_meter_readings = dict(state.get("latest_meter_readings") or {})
     try:
         influx.ping()
         portal.login()
@@ -388,6 +489,49 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                 continue
 
             cnp, cui = portal.get_pod_identity(pod)
+
+            try:
+                budget = reserve_portal_request(state, limit)
+                LOG.info(
+                    "Portal request budget before reading-archive call: used=%d remaining=%d limit=%d",
+                    budget["portal_requests_24h"],
+                    budget["portal_requests_remaining"],
+                    limit,
+                )
+                archive_payload = portal.get_reading_archive(
+                    pod,
+                    cnp,
+                    cui,
+                    today - timedelta(days=READING_ARCHIVE_LOOKBACK_DAYS),
+                    today,
+                )
+                latest_index = latest_meter_index(
+                    archive_payload,
+                    pod,
+                    str(options["timezone"]),
+                )
+                if latest_index is None:
+                    LOG.warning("POD %s: reading archive returned no EA/EAP meter index", pod)
+                else:
+                    influx.write_meter_index(
+                        latest_index,
+                        str(options["influxdb_index_measurement"]),
+                    )
+                    latest_meter_readings[pod] = latest_index
+                    state["latest_meter_readings"] = latest_meter_readings
+                    save_state(state)
+                    LOG.info(
+                        "POD %s: official meter index dated %s stored (EA=%s, EAP=%s)",
+                        pod,
+                        latest_index.get("measure_date"),
+                        latest_index.get("import_index_kwh"),
+                        latest_index.get("export_index_kwh"),
+                    )
+            except PortalRateLimitError:
+                raise
+            except Exception as exc:
+                LOG.warning("POD %s: reading-archive refresh failed: %s", pod, exc)
+
             for chunk_start, chunk_end in chunk_dates(pod_start, end):
                 budget = reserve_portal_request(state, limit)
                 LOG.info(
@@ -481,6 +625,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
             "freshness_source": freshness_source,
             "freshness_query_error": freshness_query_error,
             **portal_request_status(state, limit, now_dt),
+            "latest_meter_readings": latest_meter_readings,
             **freshness,
         }
     )
@@ -494,6 +639,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
         "backfill_complete": backfill_complete,
         "freshness_source": freshness_source,
         "freshness_query_error": freshness_query_error,
+        "latest_meter_readings": latest_meter_readings,
         **portal_request_status(state, limit, now_dt),
         **freshness,
     }
@@ -523,6 +669,7 @@ def safe_status(options: dict[str, Any]) -> dict[str, Any]:
     data["effective_sync_interval_minutes"] = options["sync_interval_minutes"]
     data["backfill_complete"] = bool(persisted.get("backfill_complete"))
     data["backfill_cursor_by_pod"] = persisted.get("backfill_cursor_by_pod", {})
+    data["latest_meter_readings"] = persisted.get("latest_meter_readings", {})
     return data
 
 
@@ -614,10 +761,10 @@ h1{font-size:24px;margin:0}.badge{padding:6px 10px;border-radius:999px;backgroun
 button{background:var(--accent);border:0;color:white;padding:10px 14px;border-radius:8px;cursor:pointer}pre{white-space:pre-wrap;background:#0b0f13;padding:14px;border-radius:10px;overflow:auto}
 </style></head><body><main><div class="head"><div><h1>Rețele Electrice Collector</h1><div class="label">official 15-minute meter data → InfluxDB</div></div><div><button id="probeBtn" onclick="probeArchive()">Probe index archive</button> <button onclick="syncNow()">Sync now</button></div></div>
 <div class="grid"><div class="card"><div class="label">State</div><div id="state" class="value">—</div></div><div class="card"><div class="label">Last success</div><div id="success" class="value">—</div></div><div class="card"><div class="label">Latest data</div><div id="latest" class="value">—</div></div><div class="card"><div class="label">Data age</div><div id="age" class="value">—</div></div><div class="card"><div class="label">Points written</div><div id="points" class="value">—</div></div><div class="card"><div class="label">Mode</div><div id="mode" class="value">—</div></div></div>
-<div class="card"><div class="label">Reading archive probe</div><pre id="archive">Not run. Metadata only; raw account values are discarded.</pre></div><div class="card" style="margin-top:12px"><div class="label">Diagnostics</div><pre id="diag">Loading…</pre></div></main>
+<div class="card"><div class="label">Latest official meter indexes</div><pre id="indexes">Loading…</pre></div><div class="card" style="margin-top:12px"><div class="label">Reading archive probe</div><pre id="archive">Not run. Metadata only; raw account values are discarded.</pre></div><div class="card" style="margin-top:12px"><div class="label">Diagnostics</div><pre id="diag">Loading…</pre></div></main>
 <script>
 const $=id=>document.getElementById(id);const fmt=v=>v?new Date(v).toLocaleString():'—';
-async function refresh(){try{const r=await fetch('api/status',{cache:'no-store'});const s=await r.json();$('state').textContent=s.state;$('success').textContent=fmt(s.last_success);$('latest').textContent=fmt(s.latest_data_timestamp);$('age').textContent=s.data_age_days==null?'—':`${s.data_age_days} days`;$('points').textContent=s.points_written??0;$('mode').textContent=s.sync_mode||'—';$('diag').textContent=JSON.stringify(s,null,2)}catch(e){$('state').textContent='disconnected'}}
+async function refresh(){try{const r=await fetch('api/status',{cache:'no-store'});const s=await r.json();$('state').textContent=s.state;$('success').textContent=fmt(s.last_success);$('latest').textContent=fmt(s.latest_data_timestamp);$('age').textContent=s.data_age_days==null?'—':`${s.data_age_days} days`;$('points').textContent=s.points_written??0;$('mode').textContent=s.sync_mode||'—';$('indexes').textContent=JSON.stringify(s.latest_meter_readings||{},null,2);$('diag').textContent=JSON.stringify(s,null,2)}catch(e){$('state').textContent='disconnected'}}
 async function syncNow(){await fetch('api/sync',{method:'POST'});setTimeout(refresh,500)}
 async function probeArchive(){const b=$('probeBtn');b.disabled=true;$('archive').textContent='Probing authenticated Aura component metadata…';try{const r=await fetch('api/probe-reading-archive',{method:'POST'});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch(e){$('archive').textContent='Probe HTTP '+r.status+' returned non-JSON:\\n'+raw.slice(0,2000);return}$('archive').textContent=JSON.stringify(d,null,2)}catch(e){$('archive').textContent='Probe failed: '+e}finally{b.disabled=false}}
 refresh();setInterval(refresh,5000);
@@ -670,6 +817,7 @@ def scheduler(options: dict[str, Any]) -> None:
                         "data_fresh": result["data_fresh"],
                         "freshness_source": result["freshness_source"],
                         "freshness_query_error": result["freshness_query_error"],
+                        "latest_meter_readings": result["latest_meter_readings"],
                         "portal_requests_24h": result["portal_requests_24h"],
                         "portal_requests_remaining": result["portal_requests_remaining"],
                         "portal_request_limit_24h": result["portal_request_limit_24h"],
