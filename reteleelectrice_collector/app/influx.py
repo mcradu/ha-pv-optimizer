@@ -38,6 +38,9 @@ def _field_value(value: Any) -> str | None:
         if not math.isfinite(value):
             return None
         return repr(value)
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
     return None
 
 
@@ -63,6 +66,28 @@ def point_to_line(measurement: str, point: dict[str, Any]) -> str | None:
     if not fields:
         return None
     return f"{_escape_measurement(measurement)},{tags} {','.join(fields)} {int(point['timestamp'])}"
+
+
+def meter_index_to_line(measurement: str, reading: dict[str, Any]) -> str | None:
+    pod = str(reading.get("pod") or "unknown")
+    tags = f"pod={_escape_tag(pod)},source=reteleelectrice"
+    fields: list[str] = []
+    for key in (
+        "import_index_kwh",
+        "export_index_kwh",
+        "measure_date",
+        "reading_type",
+        "meter_serial",
+        "constant",
+    ):
+        if key not in reading or reading[key] is None:
+            continue
+        encoded = _field_value(reading[key])
+        if encoded is not None:
+            fields.append(f"{key}={encoded}")
+    if not fields:
+        return None
+    return f"{_escape_measurement(measurement)},{tags} {','.join(fields)} {int(reading['timestamp'])}"
 
 
 class InfluxWriter:
@@ -121,6 +146,32 @@ class InfluxWriter:
         if not values or not values[0]:
             return None
         return datetime.fromtimestamp(float(values[0][0]), tz=timezone.utc)
+
+    def write_meter_index(
+        self,
+        reading: dict[str, Any],
+        measurement: str,
+    ) -> int:
+        line = meter_index_to_line(measurement, reading)
+        if not line:
+            return 0
+        params = {"db": self.database, "precision": "s"}
+        if self.retention_policy:
+            params["rp"] = self.retention_policy
+        response = self.session.post(
+            urljoin(self.url, "write"),
+            params=params,
+            data=line.encode("utf-8"),
+            headers={"Content-Type": "text/plain; charset=utf-8"},
+            auth=self.auth,
+            timeout=self.timeout,
+        )
+        if response.status_code not in (200, 204):
+            detail = response.text[:300].strip()
+            raise InfluxError(
+                f"InfluxDB meter-index write failed with HTTP {response.status_code}: {detail}"
+            )
+        return 1
 
     def write_points(self, points: Iterable[dict[str, Any]], batch_size: int = 5000) -> int:
         lines = [line for point in points if (line := point_to_line(self.measurement, point))]
