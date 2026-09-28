@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.7
+
+- Calculate battery-safe `available_solar_headroom_kwh` from the remaining PV forecast after expected house load, battery energy needed for the sunset target, charging efficiency, and the configured forecast safety reserve.
+- Expose `battery_target_reachable` explicitly alongside projected sunset shortfall.
+- Publish read-only Home Assistant entities for solar headroom, projected sunset shortfall, and battery-target reachability so other optimizers can consume one shared energy model.
+- Persist the new headroom and reachability fields in `pv_optimizer_charge` telemetry.
+- Keep all inverter control in mandatory shadow mode; the new Home Assistant states are observability/interface signals only.
+
+
 ## 0.2.6
 
 - Add `export_price_ron_per_kwh` to the Home Assistant app Configuration UI, defaulting to `0.11` RON/kWh.
