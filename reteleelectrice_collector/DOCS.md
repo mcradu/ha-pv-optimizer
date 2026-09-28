@@ -74,6 +74,15 @@ Version 0.3.4 intentionally returns the metadata extraction itself to the compac
 
 Version 0.3.5 adds only bounded identifier-token windows around a small set of archive anchors. It does not emit raw code windows and caps the output to 24 contexts, which keeps the diagnostic lightweight while preserving variable names adjacent to `methodName` and `listaParam`.
 
+
+## Live meter-reading validation
+
+Version 0.3.6 adds a separate **Probe latest meter readings** button. The Reading Archive component metadata identifies the portal service as `RetriveSingleSelf` with parameters `pod`, `startDt`, and `endDt`. The diagnostic uses that contract over a bounded 120-day range and shows a sanitized response in the Ingress UI.
+
+This probe is intentionally **not** a production meter-index feed yet. The portal exposes several register/type codes, and their exact import/export semantics must be confirmed from a real response before a value is labelled as the declarable consumption or production index. No response from this probe is written to InfluxDB.
+
+Once the live register mapping is validated, the supported follow-up is to persist the official cumulative indexes separately from `reteleelectrice_meter_15m` and expose them to Energy Reporting/Home Assistant.
+
 ## Security
 
 The collector does not store Salesforce session cookies, ViewState tokens, CNP/CUI values, or passwords in its state file or logs. Authentication/session material lives only in process memory.
