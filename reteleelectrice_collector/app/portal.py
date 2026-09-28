@@ -298,6 +298,17 @@ class ReteleElectricePortal:
             "related_definitions": related,
         }
 
+    def get_reading_archive(
+        self,
+        pod: str,
+        start_date: date,
+        end_date: date,
+    ) -> Any:
+        return self._call_vf_ws_async(
+            "RetriveSingleSelf",
+            [pod, start_date.isoformat(), end_date.isoformat()],
+        )
+
     def get_load_curves(
         self,
         pod: str,
