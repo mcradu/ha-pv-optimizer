@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8
+
+- Publish the configured `export_price_ron_per_kwh` as read-only Home Assistant sensor `sensor.pv_optimizer_export_price`.
+- Let downstream optimizers consume the same live export/opportunity price instead of duplicating economic configuration.
+- Keep the change observability-only; no inverter or load control is added.
+
 ## 0.2.7
 
 - Calculate battery-safe `available_solar_headroom_kwh` from the remaining PV forecast after expected house load, battery energy needed for the sunset target, charging efficiency, and the configured forecast safety reserve.
