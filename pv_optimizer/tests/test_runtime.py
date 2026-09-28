@@ -62,15 +62,20 @@ class RuntimeTests(unittest.TestCase):
     def test_energy_interface_is_published_to_home_assistant(self):
         import run
         runtime = object.__new__(run.Runtime)
-        runtime.options = {"sunset_target_soc": 100, "forecast_safety_kwh": 0.5}
+        runtime.options = {
+            "sunset_target_soc": 100,
+            "forecast_safety_kwh": 0.5,
+            "export_price_ron_per_kwh": 0.11,
+        }
         runtime.client = MagicMock()
         runtime._publish_energy_interface({
             "available_solar_headroom_kwh": 4.2,
             "projected_sunset_shortfall_kwh": 0,
             "battery_target_reachable": True,
         })
-        self.assertEqual(runtime.client.set_state.call_count, 3)
+        self.assertEqual(runtime.client.set_state.call_count, 4)
         calls = {call.args[0]: call.args for call in runtime.client.set_state.call_args_list}
+        self.assertEqual(calls["sensor.pv_optimizer_export_price"][1], 0.11)
         self.assertEqual(calls["sensor.pv_optimizer_available_solar_headroom"][1], 4.2)
         self.assertEqual(calls["sensor.pv_optimizer_projected_sunset_shortfall"][1], 0)
         self.assertEqual(calls["binary_sensor.pv_optimizer_battery_target_reachable"][1], "on")
