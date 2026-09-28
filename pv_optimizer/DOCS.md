@@ -1,4 +1,4 @@
-# HA PV Optimizer 0.2.7
+# HA PV Optimizer 0.2.8
 
 This release is a safe migration foundation for `pv_night_battery_export.yaml` V5.8.2.
 
@@ -6,12 +6,13 @@ The Charging tab models the battery as a flexible PV-only consumer and produces 
 
 The Decision tab shows the current shadow night-injection decision and the latest in-memory samples. The same samples are stored in InfluxDB under `pv_optimizer_night_injection`; charging remains in `pv_optimizer_charge`. Recent events record only meaningful night-decision changes, while InfluxDB receives every evaluation cycle.
 
-`export_price_ron_per_kwh` sets the flat export/injection price in RON/kWh from the app Configuration UI. The default is `0.11`. The optimizer uses it to calculate and display the estimated value of exportable battery surplus and stores both the price and value with night-injection telemetry. Changing the price does not alter the energy-reserve or export-power rules.
+`export_price_ron_per_kwh` sets the flat export/injection price in RON/kWh from the app Configuration UI. The default is `0.11`. The optimizer uses it to calculate and display the estimated value of exportable battery surplus, stores both the price and value with night-injection telemetry, and publishes the configured value as `sensor.pv_optimizer_export_price` for downstream economic models. Changing the price does not alter the energy-reserve or export-power rules.
 
 Charge evaluations and transitions are written to InfluxDB measurement `pv_optimizer_charge`. The default target is `home_assistant.one_year`; URL and credentials are configured in the add-on options. The most recent records remain in memory only for the Web UI.
 
-Version 0.2.7 also publishes a small read-only Home Assistant energy interface for consumers such as Heating Optimizer:
+Version 0.2.8 publishes a small read-only Home Assistant energy/economic interface for consumers such as Heating Optimizer:
 
+- `sensor.pv_optimizer_export_price` — configured export/opportunity price in RON/kWh, sourced directly from PV Optimizer options.
 - `sensor.pv_optimizer_available_solar_headroom` — forecast energy that can be consumed before sunset after estimated house load, battery energy still needed to reach the sunset SOC target, charging efficiency, and `forecast_safety_kwh` are reserved.
 - `sensor.pv_optimizer_projected_sunset_shortfall` — remaining projected battery energy shortfall at sunset in kWh.
 - `binary_sensor.pv_optimizer_battery_target_reachable` — `on` when the configured sunset SOC target is already reached or forecast energy is sufficient to reach it after the safety reserve.
