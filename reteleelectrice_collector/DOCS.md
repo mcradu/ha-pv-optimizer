@@ -1,4 +1,4 @@
-# Rețele Electrice Collector
+# Rețele Electrice Collector 0.4.0
 
 This Home Assistant app collects the official meter load curves exposed by `contulmeu.reteleelectrice.ro` and writes them to InfluxDB at the portal's maximum available granularity.
 
@@ -83,3 +83,18 @@ Do not paste browser `sid`, ViewState, CSRF, cookies, or copied cURL requests in
 ## Portal compatibility
 
 This is an unofficial collector. It uses the portal's Salesforce Experience Cloud and Visualforce/Aura interfaces. Those interfaces may change without notice. A portal change should fail visibly through the status page and logs rather than silently producing fabricated data.
+
+
+## Official meter indexes
+
+Version 0.4.0 also reads the authenticated Reading Archive for each selected POD. It stores the newest official meter reading in the configured `influxdb_index_measurement` (default `reteleelectrice_meter_index`).
+
+The persisted fields are:
+
+- `import_index_kwh` — active energy consumed/imported, portal register `EA`;
+- `export_index_kwh` — active energy produced/exported, portal register `EAP`;
+- `measure_date`, `reading_type`, `meter_serial`, and `constant`.
+
+The point timestamp is derived from the official reading date in the configured local timezone. Repeating the same reading is therefore idempotent. These values are cumulative meter indexes, not 15-minute interval energy, and are intended for display/reporting separately from `reteleelectrice_meter_15m`.
+
+The Reading Archive request uses the same local sliding request budget as curve downloads. If the archive endpoint fails, load-curve collection continues and the last successfully stored meter index remains available.
