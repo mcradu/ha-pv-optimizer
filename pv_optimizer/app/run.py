@@ -73,7 +73,7 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.7 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.8 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -227,7 +227,7 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.7",
+                "version": "0.2.8",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
@@ -261,6 +261,17 @@ class Runtime:
             "sunset_target_soc": float(self.options["sunset_target_soc"]),
             "forecast_safety_kwh": float(self.options["forecast_safety_kwh"]),
         }
+        self.client.set_state(
+            "sensor.pv_optimizer_export_price",
+            float(self.options["export_price_ron_per_kwh"]),
+            {
+                "source": "pv_optimizer",
+                "shadow": True,
+                "friendly_name": "PV Optimizer Export Price",
+                "unit_of_measurement": "RON/kWh",
+                "state_class": "measurement",
+            },
+        )
         if headroom is None or shortfall is None or reachable is None:
             reason = decision.get("explanation", "PV Optimizer energy interface is unavailable.")
             unavailable = {**common, "reason": reason}
@@ -335,7 +346,7 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.7",
+            "version": "0.2.8",
             "shadow": True,
             "export_price_ron_per_kwh": float(self.options["export_price_ron_per_kwh"]),
             "supervisor_token_present": bool(self.client.token),
@@ -490,7 +501,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.7"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.8"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -533,7 +544,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.7 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.8 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],
