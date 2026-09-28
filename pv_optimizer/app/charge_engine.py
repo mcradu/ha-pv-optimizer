@@ -38,6 +38,8 @@ def calculate_charge(values: ChargeInputs, current_request: str = "off") -> dict
     expected_load_kwh = estimated_house_load_w / 1000 * max(values.hours_until_sunset, 0)
     expected_chargeable_kwh = max(values.forecast_remaining_kwh - expected_load_kwh, 0) * 0.95
     sunset_shortfall_kwh = max(energy_needed_kwh + values.forecast_safety_kwh - expected_chargeable_kwh, 0)
+    available_solar_headroom_kwh = max(expected_chargeable_kwh - energy_needed_kwh - values.forecast_safety_kwh, 0)
+    battery_target_reachable = values.battery_soc >= values.sunset_target_soc or sunset_shortfall_kwh <= 0
     blockers: list[str] = []
 
     if not values.enabled:
@@ -95,6 +97,8 @@ def calculate_charge(values: ChargeInputs, current_request: str = "off") -> dict
         "energy_needed_by_sunset_kwh": round(energy_needed_kwh, 3),
         "expected_chargeable_before_sunset_kwh": round(expected_chargeable_kwh, 3),
         "projected_sunset_shortfall_kwh": round(sunset_shortfall_kwh, 3),
+        "available_solar_headroom_kwh": round(available_solar_headroom_kwh, 3),
+        "battery_target_reachable": battery_target_reachable,
         "catchup_needed": catchup_needed,
         "blockers": blockers,
         "explanation": reason,
