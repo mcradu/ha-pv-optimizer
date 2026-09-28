@@ -18,9 +18,9 @@ import requests
 
 from influx import InfluxWriter
 from normalize import normalize_curve_payload
-from portal import ReteleElectricePortal
+from portal import ReteleElectricePortal, sanitize_reading_archive_response
 
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
@@ -544,6 +544,42 @@ def probe_reading_archive(options: dict[str, Any]) -> dict[str, Any]:
         portal.close()
 
 
+def probe_latest_meter_readings(options: dict[str, Any]) -> dict[str, Any]:
+    portal = ReteleElectricePortal(
+        str(options.get("username") or ""),
+        str(options.get("password") or ""),
+    )
+    try:
+        portal.login()
+        configured = [
+            value.strip()
+            for value in str(options.get("pod") or "").split(",")
+            if value.strip()
+        ]
+        pods = configured or portal.get_pods()
+        local_today = datetime.now(ZoneInfo(str(options["timezone"]))).date()
+        range_start = local_today - timedelta(days=120)
+        readings: list[dict[str, Any]] = []
+        for pod in pods:
+            raw = portal.get_reading_archive(pod, range_start, local_today)
+            readings.append(
+                {
+                    "pod_suffix": pod[-4:],
+                    "range_start": range_start.isoformat(),
+                    "range_end": local_today.isoformat(),
+                    "response": sanitize_reading_archive_response(raw),
+                }
+            )
+        return {
+            "service": "RetriveSingleSelf",
+            "diagnostic_only": True,
+            "declarable_index_mapping_validated": False,
+            "readings": readings,
+        }
+    finally:
+        portal.close()
+
+
 class StatusHandler(BaseHTTPRequestHandler):
     server_version = "ReteleElectriceCollector/0.1"
 
@@ -599,6 +635,19 @@ class StatusHandler(BaseHTTPRequestHandler):
             finally:
                 DIAGNOSTIC_LOCK.release()
             return
+        if path == "/api/probe-latest-meter-readings":
+            if not DIAGNOSTIC_LOCK.acquire(blocking=False):
+                self._send_json({"error": "diagnostic probe already running"}, 409)
+                return
+            try:
+                result = probe_latest_meter_readings(APP_OPTIONS)
+                self._send_json({"ok": True, "result": result})
+            except Exception as exc:
+                LOG.warning("Latest meter reading probe failed: %s", exc)
+                self._send_json({"ok": False, "error": str(exc)}, 502)
+            finally:
+                DIAGNOSTIC_LOCK.release()
+            return
         self._send_json({"error": "not found"}, 404)
 
 
@@ -612,14 +661,15 @@ main{max-width:900px;margin:auto;padding:24px}.head{display:flex;justify-content
 h1{font-size:24px;margin:0}.badge{padding:6px 10px;border-radius:999px;background:#24313d}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:20px 0}
 .card{background:var(--card);padding:16px;border-radius:12px}.label{color:var(--muted);font-size:12px;text-transform:uppercase}.value{font-size:20px;margin-top:6px;word-break:break-word}
 button{background:var(--accent);border:0;color:white;padding:10px 14px;border-radius:8px;cursor:pointer}pre{white-space:pre-wrap;background:#0b0f13;padding:14px;border-radius:10px;overflow:auto}
-</style></head><body><main><div class="head"><div><h1>Rețele Electrice Collector</h1><div class="label">official 15-minute meter data → InfluxDB</div></div><div><button id="probeBtn" onclick="probeArchive()">Probe index archive</button> <button onclick="syncNow()">Sync now</button></div></div>
+</style></head><body><main><div class="head"><div><h1>Rețele Electrice Collector</h1><div class="label">official 15-minute meter data → InfluxDB</div></div><div><button id="probeBtn" onclick="probeArchive()">Probe index archive</button> <button id="readingBtn" onclick="probeReadings()">Probe latest meter readings</button> <button onclick="syncNow()">Sync now</button></div></div>
 <div class="grid"><div class="card"><div class="label">State</div><div id="state" class="value">—</div></div><div class="card"><div class="label">Last success</div><div id="success" class="value">—</div></div><div class="card"><div class="label">Latest data</div><div id="latest" class="value">—</div></div><div class="card"><div class="label">Data age</div><div id="age" class="value">—</div></div><div class="card"><div class="label">Points written</div><div id="points" class="value">—</div></div><div class="card"><div class="label">Mode</div><div id="mode" class="value">—</div></div></div>
-<div class="card"><div class="label">Reading archive probe</div><pre id="archive">Not run. Metadata only; raw account values are discarded.</pre></div><div class="card" style="margin-top:12px"><div class="label">Diagnostics</div><pre id="diag">Loading…</pre></div></main>
+<div class="card"><div class="label">Latest meter readings probe</div><pre id="readings">Not run. Diagnostic only; register mapping must be validated before use for declaration.</pre></div><div class="card" style="margin-top:12px"><div class="label">Reading archive metadata probe</div><pre id="archive">Not run. Metadata only; raw account values are discarded.</pre></div><div class="card" style="margin-top:12px"><div class="label">Diagnostics</div><pre id="diag">Loading…</pre></div></main>
 <script>
 const $=id=>document.getElementById(id);const fmt=v=>v?new Date(v).toLocaleString():'—';
 async function refresh(){try{const r=await fetch('api/status',{cache:'no-store'});const s=await r.json();$('state').textContent=s.state;$('success').textContent=fmt(s.last_success);$('latest').textContent=fmt(s.latest_data_timestamp);$('age').textContent=s.data_age_days==null?'—':`${s.data_age_days} days`;$('points').textContent=s.points_written??0;$('mode').textContent=s.sync_mode||'—';$('diag').textContent=JSON.stringify(s,null,2)}catch(e){$('state').textContent='disconnected'}}
 async function syncNow(){await fetch('api/sync',{method:'POST'});setTimeout(refresh,500)}
 async function probeArchive(){const b=$('probeBtn');b.disabled=true;$('archive').textContent='Probing authenticated Aura component metadata…';try{const r=await fetch('api/probe-reading-archive',{method:'POST'});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch(e){$('archive').textContent='Probe HTTP '+r.status+' returned non-JSON:\\n'+raw.slice(0,2000);return}$('archive').textContent=JSON.stringify(d,null,2)}catch(e){$('archive').textContent='Probe failed: '+e}finally{b.disabled=false}}
+async function probeReadings(){const b=$('readingBtn');b.disabled=true;$('readings').textContent='Fetching official reading archive values…';try{const r=await fetch('api/probe-latest-meter-readings',{method:'POST'});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch(e){$('readings').textContent='Probe HTTP '+r.status+' returned non-JSON:\\n'+raw.slice(0,4000);return}$('readings').textContent=JSON.stringify(d,null,2)}catch(e){$('readings').textContent='Probe failed: '+e}finally{b.disabled=false}}
 refresh();setInterval(refresh,5000);
 </script></body></html>"""
 

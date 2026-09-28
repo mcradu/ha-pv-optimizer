@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.6
+
+- Add a manual **Probe latest meter readings** diagnostic using the reading-archive service name `RetriveSingleSelf` discovered from the portal component.
+- Query a bounded 120-day window for configured/discovered PODs and preserve reading dates, register/type codes, meter serials and numeric index values while redacting account identifiers.
+- Keep the new path diagnostic-only: it does not persist readings, does not change the 15-minute curve collector, and explicitly marks register-to-import/export mapping as unvalidated until a live response is reviewed.
+
 ## 0.3.5
 
 - Add bounded `target_token_contexts` around archive anchors such as `methodName`, `listaParam`, `sParameterName`, `XML_Readings`, `typeOfReading`, and `typeofenergy_measured`.

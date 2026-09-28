@@ -10,7 +10,7 @@ sys.path.insert(0, str(APP))
 
 from influx import InfluxError, InfluxWriter, point_to_line
 from normalize import normalize_curve_payload
-from portal import ReteleElectricePortal, parse_a4j_response, summarize_component_metadata
+from portal import ReteleElectricePortal, parse_a4j_response, sanitize_reading_archive_response, summarize_component_metadata
 from run import (
     PortalRateLimitError,
     backfill_start_for_pod,
@@ -134,6 +134,55 @@ class ParserTests(unittest.TestCase):
         summary = summarize_component_metadata(raw)
         self.assertEqual(summary["anchor_literal_candidates"], [])
         self.assertEqual(summary["target_token_contexts"], [])
+
+    def test_reading_archive_service_uses_discovered_method_and_iso_dates(self):
+        portal = ReteleElectricePortal("user", "password")
+        portal._call_vf_ws_async = Mock(return_value={"result": "OK"})
+
+        result = portal.get_reading_archive(
+            "RO00TESTPOD123456",
+            date(2026, 8, 1),
+            date(2026, 9, 28),
+        )
+
+        self.assertEqual(result, {"result": "OK"})
+        portal._call_vf_ws_async.assert_called_once_with(
+            "RetriveSingleSelf",
+            ["RO00TESTPOD123456", "2026-08-01", "2026-09-28"],
+        )
+
+    def test_reading_archive_sanitizer_preserves_register_values(self):
+        raw = {
+            "result": "OK",
+            "POD": "RO00SECRET123456",
+            "cnp": "1234567890123",
+            "records": [
+                {
+                    "measureDate": "2026-09-01",
+                    "SerialNumber": "METER-42",
+                    "typeofenergy_measured": "EAN",
+                    "Index": "12345.678",
+                },
+                {
+                    "measureDate": "2026-09-01",
+                    "typeofenergy_measured": "EAP",
+                    "Index": 2345.67,
+                },
+            ],
+        }
+
+        sanitized = sanitize_reading_archive_response(raw)
+        serialized = json.dumps(sanitized)
+
+        self.assertEqual(sanitized["POD"], "[redacted]")
+        self.assertEqual(sanitized["cnp"], "[redacted]")
+        self.assertIn("12345.678", serialized)
+        self.assertIn("2345.67", serialized)
+        self.assertIn("EAN", serialized)
+        self.assertIn("EAP", serialized)
+        self.assertIn("METER-42", serialized)
+        self.assertNotIn("RO00SECRET123456", serialized)
+        self.assertNotIn("1234567890123", serialized)
 
     def test_reading_archive_probe_uses_component_controller_actions(self):
         portal = ReteleElectricePortal("user", "password")

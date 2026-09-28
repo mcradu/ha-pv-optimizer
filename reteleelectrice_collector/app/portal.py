@@ -298,6 +298,17 @@ class ReteleElectricePortal:
             "related_definitions": related,
         }
 
+    def get_reading_archive(
+        self,
+        pod: str,
+        start_date: date,
+        end_date: date,
+    ) -> Any:
+        return self._call_vf_ws_async(
+            "RetriveSingleSelf",
+            [pod, start_date.isoformat(), end_date.isoformat()],
+        )
+
     def get_load_curves(
         self,
         pod: str,
@@ -411,7 +422,15 @@ class ReteleElectricePortal:
             post_data["com.salesforce.visualforce.ViewStateCSRF"] = viewstate_csrf
 
         post_url = urljoin(BASE_URL, form_action)
-        LOG.info("Fetching load curves from %s to %s", method_params[3], method_params[4])
+        if len(method_params) >= 5:
+            LOG.info(
+                "Calling portal service %s for range %s to %s",
+                method_name,
+                method_params[3],
+                method_params[4],
+            )
+        else:
+            LOG.info("Calling portal service %s", method_name)
         post_response = self.session.post(
             post_url,
             data=post_data,
@@ -424,9 +443,14 @@ class ReteleElectricePortal:
             timeout=max(self.timeout, 60),
         )
         if post_response.status_code >= 400:
+            range_text = (
+                f" for range {method_params[3]}..{method_params[4]}"
+                if len(method_params) >= 5
+                else ""
+            )
             raise PortalError(
-                f"Visualforce {method_name} returned HTTP {post_response.status_code} "
-                f"for range {method_params[3]}..{method_params[4]}"
+                f"Visualforce {method_name} returned HTTP {post_response.status_code}"
+                f"{range_text}"
             )
         return parse_a4j_response(post_response.text)
 
@@ -661,6 +685,47 @@ def summarize_component_metadata(
         "anchor_literal_candidates": sorted(anchor_literal_candidates),
         "target_token_contexts": target_token_contexts,
     }
+
+
+def sanitize_reading_archive_response(value: Any, max_items: int = 200) -> Any:
+    """Keep reading values and register metadata, but redact account identifiers."""
+    sensitive = {"pod", "podid", "podval", "cnp", "cui"}
+
+    def walk(item: Any, key: str = "", depth: int = 0) -> Any:
+        if depth > 8:
+            return "[max-depth]"
+        normalized_key = key.lower().replace("_", "")
+        if normalized_key in sensitive:
+            return "[redacted]"
+        if isinstance(item, dict):
+            output: dict[str, Any] = {}
+            for index, (child_key, child) in enumerate(item.items()):
+                if index >= max_items:
+                    output["_truncated"] = True
+                    break
+                output[str(child_key)] = walk(child, str(child_key), depth + 1)
+            return output
+        if isinstance(item, list):
+            output = [walk(child, key, depth + 1) for child in item[:max_items]]
+            if len(item) > max_items:
+                output.append({"_truncated": len(item) - max_items})
+            return output
+        if isinstance(item, str):
+            stripped = item.strip()
+            if ReteleElectricePortal._looks_like_pod(stripped):
+                return "[redacted]"
+            if stripped.startswith(("{", "[")):
+                try:
+                    parsed = json.loads(stripped)
+                except ValueError:
+                    parsed = None
+                if parsed is not None:
+                    return {"encoded": "json", "value": walk(parsed, key, depth + 1)}
+            if len(stripped) > 12000:
+                return stripped[:12000] + "...[truncated]"
+        return item
+
+    return walk(value)
 
 
 def parse_a4j_response(response_text: str) -> Any:
