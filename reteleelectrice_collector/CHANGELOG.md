@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Fetch the authenticated Rețele Electrice Reading Archive through `RetriveSingleSelf` once per POD during the daily sync.
+- Extract the newest official active-energy indexes: `EA` for consumption/import and `EAP` for production/export, together with reading date, reading type, meter serial and constant.
+- Persist the latest official reading idempotently to `reteleelectrice_meter_index` in InfluxDB and expose it in collector status.
+- Count the Reading Archive call against the same conservative sliding 24-hour portal request budget used by load-curve calls.
+- Keep archive failures non-fatal for 15-minute load-curve collection; the last successfully persisted reading remains available.
+
 ## 0.3.5
 
 - Add bounded `target_token_contexts` around archive anchors such as `methodName`, `listaParam`, `sParameterName`, `XML_Readings`, `typeOfReading`, and `typeofenergy_measured`.
