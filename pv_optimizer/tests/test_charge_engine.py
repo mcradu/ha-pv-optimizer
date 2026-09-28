@@ -56,6 +56,22 @@ class ChargeEngineTests(unittest.TestCase):
         self.assertNotIn("target_charge_w", result)
         self.assertNotIn("thermal_charge_limit_w", result)
 
+    def test_exposes_battery_safe_solar_headroom(self):
+        result = calculate_charge(base(), "off")
+        self.assertTrue(result["battery_target_reachable"])
+        self.assertEqual(result["projected_sunset_shortfall_kwh"], 0)
+        self.assertAlmostEqual(result["available_solar_headroom_kwh"], 34.25, places=3)
+
+    def test_shortfall_blocks_battery_target_reachable_and_headroom(self):
+        result = calculate_charge(base(forecast_remaining_kwh=2, battery_soc=50), "off")
+        self.assertFalse(result["battery_target_reachable"])
+        self.assertEqual(result["available_solar_headroom_kwh"], 0)
+        self.assertGreater(result["projected_sunset_shortfall_kwh"], 0)
+
+    def test_already_reached_target_is_reachable(self):
+        result = calculate_charge(base(battery_soc=100, forecast_remaining_kwh=0), "on")
+        self.assertTrue(result["battery_target_reachable"])
+
 
 if __name__ == "__main__":
     unittest.main()
