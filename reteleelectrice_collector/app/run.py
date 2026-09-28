@@ -18,9 +18,9 @@ import requests
 
 from influx import InfluxWriter
 from normalize import normalize_curve_payload
-from portal import ReteleElectricePortal
+from portal import ReteleElectricePortal, sanitize_reading_archive_response
 
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
@@ -544,6 +544,42 @@ def probe_reading_archive(options: dict[str, Any]) -> dict[str, Any]:
         portal.close()
 
 
+def probe_latest_meter_readings(options: dict[str, Any]) -> dict[str, Any]:
+    portal = ReteleElectricePortal(
+        str(options.get("username") or ""),
+        str(options.get("password") or ""),
+    )
+    try:
+        portal.login()
+        configured = [
+            value.strip()
+            for value in str(options.get("pod") or "").split(",")
+            if value.strip()
+        ]
+        pods = configured or portal.get_pods()
+        local_today = datetime.now(ZoneInfo(str(options["timezone"]))).date()
+        range_start = local_today - timedelta(days=120)
+        readings: list[dict[str, Any]] = []
+        for pod in pods:
+            raw = portal.get_reading_archive(pod, range_start, local_today)
+            readings.append(
+                {
+                    "pod_suffix": pod[-4:],
+                    "range_start": range_start.isoformat(),
+                    "range_end": local_today.isoformat(),
+                    "response": sanitize_reading_archive_response(raw),
+                }
+            )
+        return {
+            "service": "RetriveSingleSelf",
+            "diagnostic_only": True,
+            "declarable_index_mapping_validated": False,
+            "readings": readings,
+        }
+    finally:
+        portal.close()
+
+
 class StatusHandler(BaseHTTPRequestHandler):
     server_version = "ReteleElectriceCollector/0.1"
 
@@ -595,6 +631,19 @@ class StatusHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "result": result})
             except Exception as exc:
                 LOG.warning("Reading archive component probe failed: %s", exc)
+                self._send_json({"ok": False, "error": str(exc)}, 502)
+            finally:
+                DIAGNOSTIC_LOCK.release()
+            return
+        if path == "/api/probe-latest-meter-readings":
+            if not DIAGNOSTIC_LOCK.acquire(blocking=False):
+                self._send_json({"error": "diagnostic probe already running"}, 409)
+                return
+            try:
+                result = probe_latest_meter_readings(APP_OPTIONS)
+                self._send_json({"ok": True, "result": result})
+            except Exception as exc:
+                LOG.warning("Latest meter reading probe failed: %s", exc)
                 self._send_json({"ok": False, "error": str(exc)}, 502)
             finally:
                 DIAGNOSTIC_LOCK.release()
