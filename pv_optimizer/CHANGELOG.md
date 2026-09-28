@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.9
+
+- Add configurable `import_price_ron_per_kwh` and publish it as `sensor.pv_optimizer_import_price`.
+- Keep both import cash price and export opportunity price in PV Optimizer as the shared economic-price source for downstream optimizers.
+- No inverter or load control changes.
+
 ## 0.2.8
 
 - Publish the configured `export_price_ron_per_kwh` as read-only Home Assistant sensor `sensor.pv_optimizer_export_price`.

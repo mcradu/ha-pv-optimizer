@@ -66,6 +66,7 @@ class RuntimeTests(unittest.TestCase):
             "sunset_target_soc": 100,
             "forecast_safety_kwh": 0.5,
             "export_price_ron_per_kwh": 0.11,
+            "import_price_ron_per_kwh": 1.36463,
         }
         runtime.client = MagicMock()
         runtime._publish_energy_interface({
@@ -73,9 +74,10 @@ class RuntimeTests(unittest.TestCase):
             "projected_sunset_shortfall_kwh": 0,
             "battery_target_reachable": True,
         })
-        self.assertEqual(runtime.client.set_state.call_count, 4)
+        self.assertEqual(runtime.client.set_state.call_count, 5)
         calls = {call.args[0]: call.args for call in runtime.client.set_state.call_args_list}
         self.assertEqual(calls["sensor.pv_optimizer_export_price"][1], 0.11)
+        self.assertEqual(calls["sensor.pv_optimizer_import_price"][1], 1.36463)
         self.assertEqual(calls["sensor.pv_optimizer_available_solar_headroom"][1], 4.2)
         self.assertEqual(calls["sensor.pv_optimizer_projected_sunset_shortfall"][1], 0)
         self.assertEqual(calls["binary_sensor.pv_optimizer_battery_target_reachable"][1], "on")
