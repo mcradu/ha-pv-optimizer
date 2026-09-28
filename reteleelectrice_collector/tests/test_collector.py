@@ -8,7 +8,7 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP))
 
-from influx import InfluxError, InfluxWriter, point_to_line
+from influx import InfluxError, InfluxWriter, meter_index_to_line, point_to_line
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, parse_a4j_response, summarize_component_metadata
 from run import (
@@ -16,6 +16,7 @@ from run import (
     backfill_start_for_pod,
     chunk_dates,
     data_freshness,
+    latest_meter_index,
     latest_source_day,
     portal_request_status,
     reserve_portal_request,
@@ -209,6 +210,74 @@ class ParserTests(unittest.TestCase):
         )
 
 
+    def test_reading_archive_latest_index_extracts_ea_and_eap(self):
+        payload = {
+            "XML_Readings": [
+                {
+                    "measureDate": "28.09.2026",
+                    "typeOfReading": "Telecitire",
+                    "SerialNumber": "METER123",
+                    "constanta": "1",
+                    "meter": [
+                        {"typeofenergy_measured": "EA", "Value": "12.345,678"},
+                        {"typeofenergy_measured": "EAP", "Value": "9.876,543"},
+                    ],
+                },
+                {
+                    "measureDate": "27.08.2026",
+                    "typeOfReading": "Telecitire",
+                    "SerialNumber": "METER123",
+                    "constanta": "1",
+                    "meter": [
+                        {"typeofenergy_measured": "EA", "Value": "12000"},
+                        {"typeofenergy_measured": "EAP", "Value": "9500"},
+                    ],
+                },
+            ]
+        }
+
+        latest = latest_meter_index(payload, "RO00TESTPOD123456", "Europe/Bucharest")
+
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["measure_date"], "28.09.2026")
+        self.assertEqual(latest["reading_type"], "Telecitire")
+        self.assertEqual(latest["meter_serial"], "METER123")
+        self.assertAlmostEqual(latest["import_index_kwh"], 12345.678)
+        self.assertAlmostEqual(latest["export_index_kwh"], 9876.543)
+
+    def test_reading_archive_call_uses_single_self_visualforce_page(self):
+        portal = ReteleElectricePortal("user", "password")
+        portal._call_vf_ws_async = Mock(
+            return_value={"XML_Readings": []}
+        )
+
+        result = portal.get_reading_archive(
+            "RO00TESTPOD123456",
+            "1234567890123",
+            "",
+            date(2025, 8, 25),
+            date(2026, 9, 28),
+        )
+
+        self.assertEqual(result, {"XML_Readings": []})
+        call = portal._call_vf_ws_async.call_args
+        self.assertEqual(call.args[0], "RetriveSingleSelf")
+        self.assertEqual(
+            call.args[1],
+            [
+                "",
+                "",
+                "1234567890123",
+                "RO00TESTPOD123456",
+                "25/08/2025 00:00:00",
+                "28/09/2026 23:59:59",
+            ],
+        )
+        self.assertEqual(
+            call.kwargs["vf_page_name"],
+            "PED_ProxyCallWSAsynSingleSelf_VF",
+        )
+
 class SchedulingTests(unittest.TestCase):
     def test_backfill_ends_yesterday(self):
         options = {"backfill_days": 365, "rolling_days": 7}
@@ -361,6 +430,27 @@ class NormalizationTests(unittest.TestCase):
 
 
 class InfluxTests(unittest.TestCase):
+    def test_meter_index_line_persists_official_indexes_and_metadata(self):
+        reading = {
+            "pod": "RO00TESTPOD123456",
+            "timestamp": 1790542800,
+            "measure_date": "28.09.2026",
+            "reading_type": 'Tele"citire',
+            "meter_serial": "METER123",
+            "constant": "1",
+            "import_index_kwh": 12345.678,
+            "export_index_kwh": 9876.543,
+        }
+
+        line = meter_index_to_line("reteleelectrice_meter_index", reading)
+
+        self.assertIn("pod=RO00TESTPOD123456,source=reteleelectrice", line)
+        self.assertIn("import_index_kwh=12345.678", line)
+        self.assertIn("export_index_kwh=9876.543", line)
+        self.assertIn('measure_date="28.09.2026"', line)
+        self.assertIn('reading_type="Tele\\\"citire"', line)
+        self.assertTrue(line.endswith("1790542800"))
+
     def test_latest_timestamp_queries_target_measurement(self):
         writer = InfluxWriter(
             "http://influx.example:8086",
