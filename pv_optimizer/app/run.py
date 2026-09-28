@@ -73,7 +73,7 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.6 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.7 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -213,6 +213,11 @@ class Runtime:
                 "explanation": str(exc),
             }
 
+        try:
+            self._publish_energy_interface(charge_decision)
+        except RuntimeError as exc:
+            errors.append(str(exc))
+
         self.telemetry.append(self._telemetry_record(entities, charge_decision))
         night_record = self._night_telemetry_record(entities, decision)
         self.night_telemetry.append(night_record)
@@ -222,7 +227,7 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.6",
+                "version": "0.2.7",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
@@ -246,9 +251,91 @@ class Runtime:
             LOG.info("Home Assistant entity reads recovered")
         self.last_error_signature = signature
 
+    def _publish_energy_interface(self, decision: dict) -> None:
+        headroom = decision.get("available_solar_headroom_kwh")
+        shortfall = decision.get("projected_sunset_shortfall_kwh")
+        reachable = decision.get("battery_target_reachable")
+        common = {
+            "source": "pv_optimizer",
+            "shadow": True,
+            "sunset_target_soc": float(self.options["sunset_target_soc"]),
+            "forecast_safety_kwh": float(self.options["forecast_safety_kwh"]),
+        }
+        if headroom is None or shortfall is None or reachable is None:
+            reason = decision.get("explanation", "PV Optimizer energy interface is unavailable.")
+            unavailable = {**common, "reason": reason}
+            self.client.set_state(
+                "sensor.pv_optimizer_available_solar_headroom",
+                "unavailable",
+                {
+                    **unavailable,
+                    "friendly_name": "PV Optimizer Available Solar Headroom",
+                    "unit_of_measurement": "kWh",
+                    "device_class": "energy",
+                    "state_class": "measurement",
+                },
+            )
+            self.client.set_state(
+                "sensor.pv_optimizer_projected_sunset_shortfall",
+                "unavailable",
+                {
+                    **unavailable,
+                    "friendly_name": "PV Optimizer Projected Sunset Shortfall",
+                    "unit_of_measurement": "kWh",
+                    "device_class": "energy",
+                    "state_class": "measurement",
+                },
+            )
+            self.client.set_state(
+                "binary_sensor.pv_optimizer_battery_target_reachable",
+                "unavailable",
+                {
+                    **unavailable,
+                    "friendly_name": "PV Optimizer Battery Target Reachable",
+                },
+            )
+            return
+
+        self.client.set_state(
+            "sensor.pv_optimizer_available_solar_headroom",
+            headroom,
+            {
+                **common,
+                "friendly_name": "PV Optimizer Available Solar Headroom",
+                "unit_of_measurement": "kWh",
+                "device_class": "energy",
+                "state_class": "measurement",
+                "projected_sunset_shortfall_kwh": shortfall,
+                "battery_target_reachable": bool(reachable),
+            },
+        )
+        self.client.set_state(
+            "sensor.pv_optimizer_projected_sunset_shortfall",
+            shortfall,
+            {
+                **common,
+                "friendly_name": "PV Optimizer Projected Sunset Shortfall",
+                "unit_of_measurement": "kWh",
+                "device_class": "energy",
+                "state_class": "measurement",
+                "available_solar_headroom_kwh": headroom,
+                "battery_target_reachable": bool(reachable),
+            },
+        )
+        self.client.set_state(
+            "binary_sensor.pv_optimizer_battery_target_reachable",
+            "on" if reachable else "off",
+            {
+                **common,
+                "friendly_name": "PV Optimizer Battery Target Reachable",
+                "available_solar_headroom_kwh": headroom,
+                "projected_sunset_shortfall_kwh": shortfall,
+            },
+        )
+
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.6",
+            "version": "0.2.7",
             "shadow": True,
             "export_price_ron_per_kwh": float(self.options["export_price_ron_per_kwh"]),
             "supervisor_token_present": bool(self.client.token),
@@ -315,7 +402,11 @@ class Runtime:
             "maximum_voltage": decision.get("maximum_grid_voltage"),
             "determining_phase": decision.get("determining_phase"),
             "forecast_remaining_kwh": state("forecast_today_remaining"),
+            "energy_needed_by_sunset_kwh": decision.get("energy_needed_by_sunset_kwh"),
+            "expected_chargeable_before_sunset_kwh": decision.get("expected_chargeable_before_sunset_kwh"),
             "projected_shortfall_kwh": decision.get("projected_sunset_shortfall_kwh"),
+            "available_solar_headroom_kwh": decision.get("available_solar_headroom_kwh"),
+            "battery_target_reachable": decision.get("battery_target_reachable"),
         }
 
     @staticmethod
@@ -399,7 +490,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.6"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.7"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -442,7 +533,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.6 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.7 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],

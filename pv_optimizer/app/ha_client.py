@@ -35,3 +35,24 @@ class HomeAssistantClient:
             raise RuntimeError(f"HA connection failed for {entity_id}: {exc.reason}") from exc
         payload["fetched_at"] = datetime.now(timezone.utc).isoformat()
         return payload
+
+    def set_state(self, entity_id: str, state: str | float | int | bool, attributes: dict | None = None) -> dict:
+        if not self.token:
+            raise RuntimeError("SUPERVISOR_TOKEN is unavailable")
+        body = json.dumps({
+            "state": str(state).lower() if isinstance(state, bool) else str(state),
+            "attributes": attributes or {},
+        }).encode()
+        req = Request(
+            f"{self.base_url}/states/{entity_id}",
+            data=body,
+            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(req, timeout=8) as response:
+                return json.load(response)
+        except HTTPError as exc:
+            raise RuntimeError(f"HA returned HTTP {exc.code} while publishing {entity_id}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"HA connection failed while publishing {entity_id}: {exc.reason}") from exc
