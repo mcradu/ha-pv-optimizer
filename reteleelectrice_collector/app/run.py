@@ -663,7 +663,7 @@ def safe_status(options: dict[str, Any]) -> dict[str, Any]:
 
 
 class StatusHandler(BaseHTTPRequestHandler):
-    server_version = "ReteleElectriceCollector/0.1"
+    server_version = f"ReteleElectriceCollector/{VERSION}"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         LOG.debug("HTTP " + fmt, *args)
@@ -724,7 +724,7 @@ button{background:var(--accent);border:0;color:white;padding:10px 14px;border-ra
 <div class="card"><div class="label">Last success</div><div id="success" class="value">—</div></div>
 <div class="card"><div class="label">Latest 15m data</div><div id="latest" class="value">—</div></div>
 <div class="card"><div class="label">Data age</div><div id="age" class="value">—</div></div>
-<div class="card"><div class="label">Points written</div><div id="points" class="value">—</div></div>
+<div class="card"><div class="label">15m points written</div><div id="points" class="value">—</div></div>
 <div class="card"><div class="label">Mode</div><div id="mode" class="value">—</div></div>
 </div>
 <div class="card"><div class="label">Latest stored official meter indexes</div><pre id="storedIndexes">Loading…</pre></div>
