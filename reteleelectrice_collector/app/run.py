@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -20,7 +21,7 @@ from influx import InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, sanitize_reading_archive_response
 
-VERSION = "0.3.7"
+VERSION = "0.4.0"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
@@ -44,6 +45,7 @@ DEFAULTS: dict[str, Any] = {
     "influxdb_database": "home_assistant",
     "influxdb_retention_policy": "one_year",
     "influxdb_measurement": "reteleelectrice_meter_15m",
+    "influxdb_index_measurement": "reteleelectrice_meter_index",
     "influxdb_username": "",
     "influxdb_password": "",
     "stale_after_days": 5,
@@ -69,6 +71,7 @@ RUNTIME: dict[str, Any] = {
     "data_fresh": None,
     "freshness_source": None,
     "freshness_query_error": "",
+    "latest_meter_readings": {},
 }
 
 
@@ -298,6 +301,92 @@ def resolve_latest_timestamp(
     if latest is None:
         raise RuntimeError("InfluxDB target measurement has no points after sync")
     return latest, "influx_query", ""
+
+
+def _reading_number(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    if not isinstance(value, str):
+        return None
+    text = value.strip().replace("\u00a0", "").replace(" ", "")
+    if not text:
+        return None
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _reading_datetime(value: Any, timezone_name: str) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    local_tz = ZoneInfo(timezone_name)
+    for pattern in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, pattern).replace(tzinfo=local_tz)
+        except ValueError:
+            pass
+    return None
+
+
+def latest_meter_index(
+    payload: dict[str, Any],
+    pod: str,
+    timezone_name: str,
+) -> dict[str, Any] | None:
+    readings = payload.get("XML_Readings")
+    if not isinstance(readings, list):
+        return None
+
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
+    for reading in readings:
+        if not isinstance(reading, dict):
+            continue
+        reading_dt = _reading_datetime(reading.get("measureDate"), timezone_name)
+        if reading_dt is not None:
+            candidates.append((reading_dt, reading))
+    if not candidates:
+        return None
+
+    reading_dt, latest = max(candidates, key=lambda item: item[0])
+    meters = latest.get("meter")
+    if not isinstance(meters, list):
+        meters = []
+
+    values: dict[str, float] = {}
+    for meter in meters:
+        if not isinstance(meter, dict):
+            continue
+        register = str(meter.get("typeofenergy_measured") or "").strip().upper()
+        if register not in {"EA", "EAP"}:
+            continue
+        number = _reading_number(meter.get("Value"))
+        if number is not None:
+            values[register] = number
+
+    if "EA" not in values and "EAP" not in values:
+        return None
+
+    return {
+        "pod": pod,
+        "timestamp": int(reading_dt.astimezone(timezone.utc).timestamp()),
+        "measure_date": str(latest.get("measureDate") or ""),
+        "reading_type": str(latest.get("typeOfReading") or ""),
+        "meter_serial": str(latest.get("SerialNumber") or ""),
+        "constant": str(latest.get("constanta") or ""),
+        "import_index_kwh": values.get("EA"),
+        "export_index_kwh": values.get("EAP"),
+    }
 
 
 def selected_pods(portal: ReteleElectricePortal, pod_option: str) -> list[str]:
