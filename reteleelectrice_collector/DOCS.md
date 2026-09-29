@@ -42,7 +42,7 @@ After the first successful backfill, every run re-reads the latest `rolling_days
 
 The effective automatic interval is never shorter than 24 hours. Existing installations that still have an older saved value such as 360 minutes are clamped to 1440 minutes at runtime, so upgrading does not require editing Supervisor options first. A container restart does not trigger a fresh sync when the previous attempt is still inside that interval.
 
-The collector maintains a persistent sliding 24-hour request budget for `FindOutMeterLoadData`. The default budget is 8 requests even though the portal limit is 10, leaving two requests of safety margin. Each load-curve request is reserved and persisted before it is sent, so a failed HTTP request or process crash cannot accidentally hide a consumed request. Manual sync uses the same budget.
+The collector maintains one persistent sliding 24-hour portal request budget shared by 15-minute load-curve calls and Reading Archive index refreshes. The default budget is 8 requests even though the portal limit is 10, leaving two requests of safety margin. Each counted portal request is reserved and persisted before it is sent, so a failed HTTP request or process crash cannot accidentally hide a consumed request. Manual sync uses the same budget.
 
 Backfill is resumable per POD. Each successful 31-day chunk advances a persistent cursor. If the 24-hour request budget is exhausted, the collector stops before the next portal request and continues from the saved cursor on a later run instead of restarting the whole history.
 
