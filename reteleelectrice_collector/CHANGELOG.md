@@ -6,7 +6,7 @@
 - Persist the newest official cumulative indexes to `reteleelectrice_meter_index` with reading date, reading type, meter serial and meter constant.
 - Refresh the official index once per POD after load-curve synchronization when portal request budget remains.
 - Expose the latest stored reading through collector status for downstream Energy Reporting/Home Assistant use.
-- Keep sensitive customer identifiers out of InfluxDB and persisted state.
+- Keep sensitive customer identifiers out of InfluxDB and persisted state, and redact customer-code fields from probe diagnostics.
 
 ## 0.3.7
 
