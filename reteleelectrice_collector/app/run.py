@@ -461,6 +461,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
     latest_accepted_epoch: int | None = None
     freshness_source = ""
     freshness_query_error = ""
+    latest_meter_readings = dict(state.get("latest_meter_readings") or {})
     try:
         influx.ping()
         portal.login()
@@ -527,6 +528,50 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                     len(points),
                 )
 
+            archive_budget = portal_request_status(state, limit)
+            if archive_budget["portal_requests_remaining"] > 0:
+                try:
+                    budget = reserve_portal_request(state, limit)
+                    LOG.info(
+                        "Portal request budget before reading-archive call: used=%d remaining=%d limit=%d",
+                        budget["portal_requests_24h"],
+                        budget["portal_requests_remaining"],
+                        limit,
+                    )
+                    archive_payload = portal.get_reading_archive(
+                        pod,
+                        cnp,
+                        cui,
+                        today - timedelta(days=120),
+                        today,
+                    )
+                    reading = latest_meter_index(
+                        archive_payload,
+                        pod,
+                        str(options["timezone"]),
+                    )
+                    if reading is not None:
+                        influx.write_meter_index(
+                            reading,
+                            str(options["influxdb_index_measurement"]),
+                        )
+                        latest_meter_readings[pod] = reading
+                        state["latest_meter_readings"] = latest_meter_readings
+                        save_state(state)
+                        LOG.info(
+                            "POD %s: official indexes dated %s stored (EA/import=%s, EAP/export=%s)",
+                            pod,
+                            reading.get("measure_date"),
+                            reading.get("import_index_kwh"),
+                            reading.get("export_index_kwh"),
+                        )
+                    else:
+                        LOG.warning("POD %s: Reading Archive returned no EA/EAP index", pod)
+                except Exception as exc:
+                    LOG.warning("POD %s: Reading Archive refresh failed: %s", pod, exc)
+            else:
+                LOG.info("POD %s: Reading Archive refresh skipped; portal request budget exhausted", pod)
+
         latest, freshness_source, freshness_query_error = resolve_latest_timestamp(
             influx,
             latest_accepted_epoch,
@@ -569,6 +614,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
             "last_points_written": total_written,
             "freshness_source": freshness_source,
             "freshness_query_error": freshness_query_error,
+            "latest_meter_readings": latest_meter_readings,
             **portal_request_status(state, limit, now_dt),
             **freshness,
         }
@@ -583,6 +629,7 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
         "backfill_complete": backfill_complete,
         "freshness_source": freshness_source,
         "freshness_query_error": freshness_query_error,
+        "latest_meter_readings": latest_meter_readings,
         **portal_request_status(state, limit, now_dt),
         **freshness,
     }
@@ -612,6 +659,7 @@ def safe_status(options: dict[str, Any]) -> dict[str, Any]:
     data["effective_sync_interval_minutes"] = options["sync_interval_minutes"]
     data["backfill_complete"] = bool(persisted.get("backfill_complete"))
     data["backfill_cursor_by_pod"] = persisted.get("backfill_cursor_by_pod", {})
+    data["latest_meter_readings"] = persisted.get("latest_meter_readings", {})
     return data
 
 
@@ -816,6 +864,7 @@ def scheduler(options: dict[str, Any]) -> None:
                         "data_fresh": result["data_fresh"],
                         "freshness_source": result["freshness_source"],
                         "freshness_query_error": result["freshness_query_error"],
+                        "latest_meter_readings": result["latest_meter_readings"],
                         "portal_requests_24h": result["portal_requests_24h"],
                         "portal_requests_remaining": result["portal_requests_remaining"],
                         "portal_request_limit_24h": result["portal_request_limit_24h"],
