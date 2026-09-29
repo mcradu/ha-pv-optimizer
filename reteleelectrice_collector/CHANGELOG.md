@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2
+
+- Persist every valid EA/EAP reading returned by the bounded Reading Archive request, not only the newest one.
+- Keep writes idempotent by using each official reading date as the InfluxDB timestamp.
+- Prefer a `real` reading when the archive exposes multiple records for the same date.
+- Retain the newest reading in collector status while building enough cumulative-index history for interval-vs-index reconciliation downstream.
+
 ## 0.4.1
 
 - Remove the temporary Reading Archive discovery and live-probe endpoints now that EA/EAP mapping is validated and production collection is active.
