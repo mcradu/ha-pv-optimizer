@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Remove the temporary Reading Archive discovery and live-probe endpoints now that EA/EAP mapping is validated and production collection is active.
+- Remove the diagnostic lock, metadata summarizer, sanitizer-only probe code, related UI controls, and obsolete probe tests.
+- Keep only production operations in Ingress: collector status, latest stored official indexes, diagnostics, and manual sync.
+- Keep the supported Reading Archive parser fallbacks and production `RetriveSingleSelf` path used by scheduled/manual synchronization.
+
 ## 0.4.0
 
 - Validate the Reading Archive register mapping against official 15-minute curves: `EA` is cumulative grid consumption/import and `EAP` is cumulative grid production/export.

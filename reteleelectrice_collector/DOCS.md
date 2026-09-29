@@ -42,7 +42,7 @@ After the first successful backfill, every run re-reads the latest `rolling_days
 
 The effective automatic interval is never shorter than 24 hours. Existing installations that still have an older saved value such as 360 minutes are clamped to 1440 minutes at runtime, so upgrading does not require editing Supervisor options first. A container restart does not trigger a fresh sync when the previous attempt is still inside that interval.
 
-The collector maintains a persistent sliding 24-hour request budget for `FindOutMeterLoadData`. The default budget is 8 requests even though the portal limit is 10, leaving two requests of safety margin. Each load-curve request is reserved and persisted before it is sent, so a failed HTTP request or process crash cannot accidentally hide a consumed request. Manual sync uses the same budget.
+The collector maintains one persistent sliding 24-hour portal request budget shared by 15-minute load-curve calls and Reading Archive index refreshes. The default budget is 8 requests even though the portal limit is 10, leaving two requests of safety margin. Each counted portal request is reserved and persisted before it is sent, so a failed HTTP request or process crash cannot accidentally hide a consumed request. Manual sync uses the same budget.
 
 Backfill is resumable per POD. Each successful 31-day chunk advances a persistent cursor. If the 24-hour request budget is exhausted, the collector stops before the next portal request and continues from the saved cursor on a later run instead of restarting the whole history.
 
@@ -62,26 +62,25 @@ The portal returns `Q1...Qn` values and a frequency in minutes. The default `int
 
 Timestamps are converted from `Europe/Bucharest` to UTC before they are written. The conversion is monotonic across daylight-saving transitions and supports non-96-slot days.
 
-## Reading archive diagnostic
+## Production meter-index collection
 
-Version 0.1.6 adds a temporary metadata-only probe for `c:PED_Reading_Archive_Tab`, the portal component behind the meter-reading archive. The probe authenticates with the existing account, requests the Aura component definition and instance metadata, and returns only structural dictionary keys, safe Aura/Apex/markup descriptors, and action names. Raw component values are discarded before the HTTP response is built. It does not write meter indexes to InfluxDB and does not call `FindOutMeterLoadData`, so it does not consume the collector's local load-curve request budget.
+The Reading Archive discovery work is complete. The collector no longer exposes metadata-discovery or raw live-reading probe endpoints.
 
-Use **Probe index archive** on the Ingress page once, then capture only the JSON shown in the Reading archive probe panel. That JSON is designed to exclude POD values, CNP/CUI, meter indexes, passwords, cookies, ViewState, and Aura tokens.
+During a normal scheduled or manual synchronization, after the 15-minute load-curve work and only when request budget remains, the collector calls the validated `RetriveSingleSelf` Reading Archive path for each POD and stores the newest official cumulative indexes separately in `reteleelectrice_meter_index`.
 
-From version 0.3.3 the probe UI reads the HTTP response body as text before attempting JSON parsing. If Ingress or the backend returns HTML/plain text instead of JSON, the panel shows the HTTP status and the first 2000 characters of that raw response so the proxy/backend failure can be diagnosed directly.
+The validated mapping is:
 
-Version 0.3.4 intentionally returns the metadata extraction itself to the compact 0.2.1 implementation. The later `static_code_contexts` expansion is removed because the production probe could hold the process busy long enough for the Home Assistant watchdog health request to fail and restart the app.
+- `EA` → `import_index_kwh` (grid consumption/import);
+- `EAP` → `export_index_kwh` (grid production/export).
 
-Version 0.3.5 adds only bounded identifier-token windows around a small set of archive anchors. It does not emit raw code windows and caps the output to 24 contexts, which keeps the diagnostic lightweight while preserving variable names adjacent to `methodName` and `listaParam`.
+The Ingress page intentionally exposes only production controls and state:
 
+- collector health/status;
+- latest stored official meter indexes;
+- request/data diagnostics;
+- **Sync now**.
 
-## Live meter-reading validation
-
-Version 0.3.6 adds a separate **Probe latest meter readings** button. The Reading Archive component metadata identifies the portal service as `RetriveSingleSelf` with parameters `pod`, `startDt`, and `endDt`. The diagnostic uses that contract over a bounded 120-day range and shows a sanitized response in the Ingress UI.
-
-This probe is intentionally **not** a production meter-index feed yet. The portal exposes several register/type codes, and their exact import/export semantics must be confirmed from a real response before a value is labelled as the declarable consumption or production index. No response from this probe is written to InfluxDB.
-
-Once the live register mapping is validated, the supported follow-up is to persist the official cumulative indexes separately from `reteleelectrice_meter_15m` and expose them to Energy Reporting/Home Assistant.
+Portal reverse-engineering helpers used during discovery were removed in version 0.4.1. Historical details remain in `CHANGELOG.md`.
 
 ## Security
 
@@ -92,15 +91,6 @@ Do not paste browser `sid`, ViewState, CSRF, cookies, or copied cURL requests in
 ## Portal compatibility
 
 This is an unofficial collector. It uses the portal's Salesforce Experience Cloud and Visualforce/Aura interfaces. Those interfaces may change without notice. A portal change should fail visibly through the status page and logs rather than silently producing fabricated data.
-
-
-## 0.3.7 probe fix
-
-The first 0.3.6 live probe showed `A4J response did not contain asyncResponse JSON`. The issue was the request contract, not proof that the archive was empty: the probe was posting `RetriveSingleSelf` through the load-curve Visualforce page with only POD/start/end.
-
-Version 0.3.7 uses the dedicated Reading Archive page, obtains the POD account identity through the already authenticated POD-details flow, sends the full six-parameter Reading Archive request and accepts the additional Salesforce partial-response formats used by that page.
-
-The result remains diagnostic-only. Do not use a register for declaration until a successful live response confirms its meaning.
 
 
 ## Official cumulative meter indexes
