@@ -135,12 +135,14 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(summary["anchor_literal_candidates"], [])
         self.assertEqual(summary["target_token_contexts"], [])
 
-    def test_reading_archive_service_uses_discovered_method_and_iso_dates(self):
+    def test_reading_archive_service_uses_dedicated_vf_page_and_identity(self):
         portal = ReteleElectricePortal("user", "password")
         portal._call_vf_ws_async = Mock(return_value={"result": "OK"})
 
         result = portal.get_reading_archive(
             "RO00TESTPOD123456",
+            "PERSON-ID",
+            "",
             date(2026, 8, 1),
             date(2026, 9, 28),
         )
@@ -148,7 +150,22 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(result, {"result": "OK"})
         portal._call_vf_ws_async.assert_called_once_with(
             "RetriveSingleSelf",
-            ["RO00TESTPOD123456", "2026-08-01", "2026-09-28"],
+            [
+                "",
+                "",
+                "PERSON-ID",
+                "RO00TESTPOD123456",
+                "01/08/2026 00:00:00",
+                "28/09/2026 23:59:59",
+            ],
+            vf_page_name="PED_ProxyCallWSAsynSingleSelf_VF",
+        )
+
+    def test_a4j_parser_accepts_cdata_json(self):
+        page = '<partial-response><![CDATA[{"result":"OK","XML_Readings":[]}]]></partial-response>'
+        self.assertEqual(
+            parse_a4j_response(page),
+            {"result": "OK", "XML_Readings": []},
         )
 
     def test_reading_archive_sanitizer_preserves_register_values(self):
