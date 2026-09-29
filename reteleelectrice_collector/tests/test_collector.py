@@ -285,8 +285,8 @@ class ParserTests(unittest.TestCase):
                     "typeOfReading": "real",
                     "SerialNumber": "TEST-METER",
                     "meter": [
-                        {"Value": "36161", "typeofenergy_measured": "EA"},
-                        {"Value": "16695", "typeofenergy_measured": "EAP"},
+                        {"Value": "12345", "typeofenergy_measured": "EA"},
+                        {"Value": "6789", "typeofenergy_measured": "EAP"},
                     ],
                     "measureDate": "16.09.2026",
                     "constanta": "1",
@@ -295,8 +295,8 @@ class ParserTests(unittest.TestCase):
                     "typeOfReading": "real",
                     "SerialNumber": "TEST-METER",
                     "meter": [
-                        {"Value": "36132", "typeofenergy_measured": "EA"},
-                        {"Value": "16343", "typeofenergy_measured": "EAP"},
+                        {"Value": "12300", "typeofenergy_measured": "EA"},
+                        {"Value": "6500", "typeofenergy_measured": "EAP"},
                     ],
                     "measureDate": "01.09.2026",
                     "constanta": "1",
@@ -314,8 +314,8 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(reading["measure_date"], "16.09.2026")
         self.assertEqual(reading["reading_type"], "real")
         self.assertEqual(reading["meter_serial"], "TEST-METER")
-        self.assertAlmostEqual(reading["import_index_kwh"], 36161.0)
-        self.assertAlmostEqual(reading["export_index_kwh"], 16695.0)
+        self.assertAlmostEqual(reading["import_index_kwh"], 12345.0)
+        self.assertAlmostEqual(reading["export_index_kwh"], 6789.0)
 
 class SchedulingTests(unittest.TestCase):
     def test_backfill_ends_yesterday(self):
@@ -477,15 +477,15 @@ class InfluxTests(unittest.TestCase):
             "reading_type": "real",
             "meter_serial": "TEST-METER",
             "constant": "1",
-            "import_index_kwh": 36161.0,
-            "export_index_kwh": 16695.0,
+            "import_index_kwh": 12345.0,
+            "export_index_kwh": 6789.0,
         }
 
         line = meter_index_to_line("reteleelectrice_meter_index", reading)
 
         self.assertIn("pod=RO00TESTPOD123456,source=reteleelectrice", line)
-        self.assertIn("import_index_kwh=36161.0", line)
-        self.assertIn("export_index_kwh=16695.0", line)
+        self.assertIn("import_index_kwh=12345.0", line)
+        self.assertIn("export_index_kwh=6789.0", line)
         self.assertIn('measure_date="16.09.2026"', line)
         self.assertIn('reading_type="real"', line)
 
