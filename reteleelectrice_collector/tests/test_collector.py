@@ -17,6 +17,7 @@ from run import (
     chunk_dates,
     data_freshness,
     latest_meter_index,
+    meter_indexes,
     latest_source_day,
     portal_request_status,
     reserve_portal_request,
@@ -85,6 +86,53 @@ class ParserTests(unittest.TestCase):
             parse_a4j_response(page),
             {"result": "OK", "XML_Readings": []},
         )
+
+    def test_meter_indexes_returns_sorted_history_and_prefers_real_reading(self):
+        payload = {
+            "XML_Readings": [
+                {
+                    "typeOfReading": "estimated",
+                    "SerialNumber": "TEST-METER",
+                    "meter": [
+                        {"Value": "12000", "typeofenergy_measured": "EA"},
+                        {"Value": "6000", "typeofenergy_measured": "EAP"},
+                    ],
+                    "measureDate": "01.09.2026",
+                    "constanta": "1",
+                },
+                {
+                    "typeOfReading": "real",
+                    "SerialNumber": "TEST-METER",
+                    "meter": [
+                        {"Value": "12001", "typeofenergy_measured": "EA"},
+                        {"Value": "6001", "typeofenergy_measured": "EAP"},
+                    ],
+                    "measureDate": "01.09.2026",
+                    "constanta": "1",
+                },
+                {
+                    "typeOfReading": "real",
+                    "SerialNumber": "TEST-METER",
+                    "meter": [
+                        {"Value": "12050", "typeofenergy_measured": "EA"},
+                        {"Value": "6300", "typeofenergy_measured": "EAP"},
+                    ],
+                    "measureDate": "16.09.2026",
+                    "constanta": "1",
+                },
+            ]
+        }
+
+        readings = meter_indexes(
+            payload,
+            "RO00TESTPOD123456",
+            "Europe/Bucharest",
+        )
+
+        self.assertEqual([item["measure_date"] for item in readings], ["01.09.2026", "16.09.2026"])
+        self.assertEqual(readings[0]["reading_type"], "real")
+        self.assertEqual(readings[0]["import_index_kwh"], 12001.0)
+        self.assertEqual(readings[0]["export_index_kwh"], 6001.0)
 
     def test_latest_meter_index_maps_ea_to_import_and_eap_to_export(self):
         payload = {
@@ -296,6 +344,48 @@ class InfluxTests(unittest.TestCase):
         self.assertIn("export_index_kwh=6789.0", line)
         self.assertIn('measure_date="16.09.2026"', line)
         self.assertIn('reading_type="real"', line)
+
+    def test_meter_index_batch_write_sends_multiple_lines(self):
+        writer = InfluxWriter(
+            "http://influx.example:8086",
+            "home_assistant",
+            "one_year",
+            "reteleelectrice_meter_15m",
+        )
+        response = Mock()
+        response.status_code = 204
+        writer.session.post = Mock(return_value=response)
+
+        readings = [
+            {
+                "pod": "RO00TESTPOD123456",
+                "timestamp": 1788210000,
+                "measure_date": "01.09.2026",
+                "reading_type": "real",
+                "meter_serial": "TEST-METER",
+                "constant": "1",
+                "import_index_kwh": 12001.0,
+                "export_index_kwh": 6001.0,
+            },
+            {
+                "pod": "RO00TESTPOD123456",
+                "timestamp": 1789506000,
+                "measure_date": "16.09.2026",
+                "reading_type": "real",
+                "meter_serial": "TEST-METER",
+                "constant": "1",
+                "import_index_kwh": 12050.0,
+                "export_index_kwh": 6300.0,
+            },
+        ]
+
+        written = writer.write_meter_indexes(readings, "reteleelectrice_meter_index")
+
+        self.assertEqual(written, 2)
+        body = writer.session.post.call_args.kwargs["data"].decode("utf-8")
+        self.assertEqual(len(body.splitlines()), 2)
+        self.assertIn('measure_date="01.09.2026"', body)
+        self.assertIn('measure_date="16.09.2026"', body)
 
     def test_latest_timestamp_queries_target_measurement(self):
         writer = InfluxWriter(

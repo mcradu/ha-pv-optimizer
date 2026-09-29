@@ -115,4 +115,6 @@ The POD remains a tag, matching the 15-minute measurement. Customer personal/com
 
 The portal supplies a reading date rather than a time of day, so the InfluxDB timestamp is local midnight on that official reading date. Re-reading the same archive entry is idempotent.
 
-The latest stored official reading is also exposed in collector status. Downstream reporting should display the official reading date prominently: an archive value is an exact index for that date, not an estimate of the physical meter index on a later day.
+All valid readings returned by the bounded Reading Archive window are stored idempotently, so the measurement keeps consecutive official index points rather than only the newest value. When multiple records exist for the same date, a `real` reading is preferred over a non-real reading. The newest stored official reading is also exposed in collector status.
+
+This history lets downstream Energy Reporting compare the difference between two consecutive cumulative indexes with the sum of the official 15-minute intervals over exactly the same date range. The official reading date must still be displayed prominently: an archive value is an exact index for that date, not an estimate of the physical meter index on a later day.

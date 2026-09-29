@@ -147,9 +147,17 @@ class InfluxWriter:
             return None
         return datetime.fromtimestamp(float(values[0][0]), tz=timezone.utc)
 
-    def write_meter_index(self, reading: dict[str, Any], measurement: str) -> int:
-        line = meter_index_to_line(measurement, reading)
-        if not line:
+    def write_meter_indexes(
+        self,
+        readings: Iterable[dict[str, Any]],
+        measurement: str,
+    ) -> int:
+        lines = [
+            line
+            for reading in readings
+            if (line := meter_index_to_line(measurement, reading))
+        ]
+        if not lines:
             return 0
         params = {"db": self.database, "precision": "s"}
         if self.retention_policy:
@@ -157,7 +165,7 @@ class InfluxWriter:
         response = self.session.post(
             urljoin(self.url, "write"),
             params=params,
-            data=line.encode("utf-8"),
+            data="\n".join(lines).encode("utf-8"),
             headers={"Content-Type": "text/plain; charset=utf-8"},
             auth=self.auth,
             timeout=self.timeout,
@@ -167,7 +175,10 @@ class InfluxWriter:
             raise InfluxError(
                 f"InfluxDB meter-index write failed with HTTP {response.status_code}: {detail}"
             )
-        return 1
+        return len(lines)
+
+    def write_meter_index(self, reading: dict[str, Any], measurement: str) -> int:
+        return self.write_meter_indexes([reading], measurement)
 
     def write_points(self, points: Iterable[dict[str, Any]], batch_size: int = 5000) -> int:
         lines = [line for point in points if (line := point_to_line(self.measurement, point))]
