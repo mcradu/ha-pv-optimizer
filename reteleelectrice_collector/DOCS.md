@@ -101,3 +101,28 @@ The first 0.3.6 live probe showed `A4J response did not contain asyncResponse JS
 Version 0.3.7 uses the dedicated Reading Archive page, obtains the POD account identity through the already authenticated POD-details flow, sends the full six-parameter Reading Archive request and accepts the additional Salesforce partial-response formats used by that page.
 
 The result remains diagnostic-only. Do not use a register for declaration until a successful live response confirms its meaning.
+
+
+## Official cumulative meter indexes
+
+Version 0.4.0 promotes the Reading Archive from diagnostic-only to a persisted data source after live validation.
+
+The live archive returned cumulative `EA` and `EAP` registers. Their meaning was cross-checked against the official 15-minute Rețele Electrice curves over multiple complete months:
+
+- `EA` follows summed `import_kwh`, so it is stored as `import_index_kwh`;
+- `EAP` follows summed `export_kwh`, so it is stored as `export_index_kwh`.
+
+The default measurement is `reteleelectrice_meter_index`. Each point stores only:
+
+- `import_index_kwh`;
+- `export_index_kwh`;
+- `measure_date`;
+- `reading_type`;
+- `meter_serial`;
+- `constant`.
+
+The POD remains a tag, matching the 15-minute measurement. Customer personal/company identifiers are not written.
+
+The portal supplies a reading date rather than a time of day, so the InfluxDB timestamp is local midnight on that official reading date. Re-reading the same archive entry is idempotent.
+
+The latest stored official reading is also exposed in collector status. Downstream reporting should display the official reading date prominently: an archive value is an exact index for that date, not an estimate of the physical meter index on a later day.
