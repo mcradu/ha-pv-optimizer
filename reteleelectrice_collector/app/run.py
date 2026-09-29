@@ -717,7 +717,11 @@ def probe_latest_meter_readings(options: dict[str, Any]) -> dict[str, Any]:
         return {
             "service": "RetriveSingleSelf",
             "diagnostic_only": True,
-            "declarable_index_mapping_validated": False,
+            "declarable_index_mapping_validated": True,
+            "register_mapping": {
+                "EA": "grid_consumption_import_index",
+                "EAP": "grid_production_export_index",
+            },
             "readings": readings,
         }
     finally:
@@ -807,10 +811,10 @@ h1{font-size:24px;margin:0}.badge{padding:6px 10px;border-radius:999px;backgroun
 button{background:var(--accent);border:0;color:white;padding:10px 14px;border-radius:8px;cursor:pointer}pre{white-space:pre-wrap;background:#0b0f13;padding:14px;border-radius:10px;overflow:auto}
 </style></head><body><main><div class="head"><div><h1>Rețele Electrice Collector</h1><div class="label">official 15-minute meter data → InfluxDB</div></div><div><button id="probeBtn" onclick="probeArchive()">Probe index archive</button> <button id="readingBtn" onclick="probeReadings()">Probe latest meter readings</button> <button onclick="syncNow()">Sync now</button></div></div>
 <div class="grid"><div class="card"><div class="label">State</div><div id="state" class="value">—</div></div><div class="card"><div class="label">Last success</div><div id="success" class="value">—</div></div><div class="card"><div class="label">Latest data</div><div id="latest" class="value">—</div></div><div class="card"><div class="label">Data age</div><div id="age" class="value">—</div></div><div class="card"><div class="label">Points written</div><div id="points" class="value">—</div></div><div class="card"><div class="label">Mode</div><div id="mode" class="value">—</div></div></div>
-<div class="card"><div class="label">Latest meter readings probe</div><pre id="readings">Not run. Diagnostic only; register mapping must be validated before use for declaration.</pre></div><div class="card" style="margin-top:12px"><div class="label">Reading archive metadata probe</div><pre id="archive">Not run. Metadata only; raw account values are discarded.</pre></div><div class="card" style="margin-top:12px"><div class="label">Diagnostics</div><pre id="diag">Loading…</pre></div></main>
+<div class="card"><div class="label">Latest stored official meter indexes</div><pre id="storedIndexes">Loading…</pre></div><div class="card" style="margin-top:12px"><div class="label">Latest meter readings probe</div><pre id="readings">Not run. Diagnostic view of the validated EA/EAP register mapping.</pre></div><div class="card" style="margin-top:12px"><div class="label">Reading archive metadata probe</div><pre id="archive">Not run. Metadata only; raw account values are discarded.</pre></div><div class="card" style="margin-top:12px"><div class="label">Diagnostics</div><pre id="diag">Loading…</pre></div></main>
 <script>
 const $=id=>document.getElementById(id);const fmt=v=>v?new Date(v).toLocaleString():'—';
-async function refresh(){try{const r=await fetch('api/status',{cache:'no-store'});const s=await r.json();$('state').textContent=s.state;$('success').textContent=fmt(s.last_success);$('latest').textContent=fmt(s.latest_data_timestamp);$('age').textContent=s.data_age_days==null?'—':`${s.data_age_days} days`;$('points').textContent=s.points_written??0;$('mode').textContent=s.sync_mode||'—';$('diag').textContent=JSON.stringify(s,null,2)}catch(e){$('state').textContent='disconnected'}}
+async function refresh(){try{const r=await fetch('api/status',{cache:'no-store'});const s=await r.json();$('state').textContent=s.state;$('success').textContent=fmt(s.last_success);$('latest').textContent=fmt(s.latest_data_timestamp);$('age').textContent=s.data_age_days==null?'—':`${s.data_age_days} days`;$('points').textContent=s.points_written??0;$('mode').textContent=s.sync_mode||'—';$('storedIndexes').textContent=JSON.stringify(s.latest_meter_readings||{},null,2);$('diag').textContent=JSON.stringify(s,null,2)}catch(e){$('state').textContent='disconnected'}}
 async function syncNow(){await fetch('api/sync',{method:'POST'});setTimeout(refresh,500)}
 async function probeArchive(){const b=$('probeBtn');b.disabled=true;$('archive').textContent='Probing authenticated Aura component metadata…';try{const r=await fetch('api/probe-reading-archive',{method:'POST'});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch(e){$('archive').textContent='Probe HTTP '+r.status+' returned non-JSON:\\n'+raw.slice(0,2000);return}$('archive').textContent=JSON.stringify(d,null,2)}catch(e){$('archive').textContent='Probe failed: '+e}finally{b.disabled=false}}
 async function probeReadings(){const b=$('readingBtn');b.disabled=true;$('readings').textContent='Fetching official reading archive values…';try{const r=await fetch('api/probe-latest-meter-readings',{method:'POST'});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch(e){$('readings').textContent='Probe HTTP '+r.status+' returned non-JSON:\\n'+raw.slice(0,4000);return}$('readings').textContent=JSON.stringify(d,null,2)}catch(e){$('readings').textContent='Probe failed: '+e}finally{b.disabled=false}}
