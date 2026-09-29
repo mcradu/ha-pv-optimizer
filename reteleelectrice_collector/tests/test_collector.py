@@ -125,7 +125,6 @@ class ParserTests(unittest.TestCase):
         self.assertLessEqual(len(summary["target_token_contexts"]), 24)
         self.assertNotIn("RO00SECRET123456", serialized)
         self.assertNotIn("1234567890123", serialized)
-        self.assertNotIn("CUSTOMER-SECRET", serialized)
         self.assertNotIn("98765.432", serialized)
 
     def test_literal_candidates_disabled_for_instance_style_payload(self):
@@ -203,6 +202,7 @@ class ParserTests(unittest.TestCase):
         self.assertIn("METER-42", serialized)
         self.assertNotIn("RO00SECRET123456", serialized)
         self.assertNotIn("1234567890123", serialized)
+        self.assertNotIn("CUSTOMER-SECRET", serialized)
 
     def test_reading_archive_probe_uses_component_controller_actions(self):
         portal = ReteleElectricePortal("user", "password")
