@@ -302,12 +302,23 @@ class ReteleElectricePortal:
     def get_reading_archive(
         self,
         pod: str,
+        customer_personal_id: str,
+        customer_company_id: str,
         start_date: date,
         end_date: date,
     ) -> Any:
+        start_text = start_date.strftime("%d/%m/%Y 00:00:00")
+        end_text = end_date.strftime("%d/%m/%Y 23:59:59")
+        if customer_personal_id:
+            params = ["", "", customer_personal_id, pod, start_text, end_text]
+        elif customer_company_id:
+            params = ["", customer_company_id, "", pod, start_text, end_text]
+        else:
+            params = ["", "", "", pod, start_text, end_text]
         return self._call_vf_ws_async(
             "RetriveSingleSelf",
-            [pod, start_date.isoformat(), end_date.isoformat()],
+            params,
+            vf_page_name=READING_ARCHIVE_VF_PAGE,
         )
 
     def get_load_curves(
