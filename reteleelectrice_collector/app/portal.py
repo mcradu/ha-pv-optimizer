@@ -766,4 +766,32 @@ def parse_a4j_response(response_text: str) -> Any:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PortalError("A4J JavaScript result could not be decoded") from exc
 
-    raise PortalError("A4J response did not contain asyncResponse JSON")
+    # Reading Archive pages can return the payload in a generic result/response node.
+    generic = soup.find(id=re.compile(r"(?:result|response)$", re.I))
+    if generic:
+        raw = generic.get_text(strip=True)
+        if raw:
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                pass
+
+    # Some Salesforce partial-page responses wrap the JSON in CDATA.
+    for candidate in re.findall(r"<!\[CDATA\[(.*?)\]\]>", response_text, re.DOTALL):
+        raw = candidate.strip()
+        if not raw:
+            continue
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            nested = re.search(r"[\[{].*[}\]]", raw, re.DOTALL)
+            if nested:
+                try:
+                    return json.loads(nested.group(0))
+                except json.JSONDecodeError:
+                    pass
+
+    raise PortalError(
+        "A4J response did not contain a parseable JSON result "
+        f"(response length {len(response_text)})"
+    )
