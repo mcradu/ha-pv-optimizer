@@ -20,6 +20,7 @@ BASE_URL = "https://contulmeu.reteleelectrice.ro"
 LOGIN_PAGE = f"{BASE_URL}/PEDRO_SiteLogin"
 AURA_URL = f"{BASE_URL}/s/sfsites/aura"
 CURVE_VF_PAGE = "PED_ProxyCallWSAsync_Curve_VF"
+READING_ARCHIVE_VF_PAGE = "PED_ProxyCallWSAsynSingleSelf_VF"
 READING_ARCHIVE_COMPONENT = "c:PED_Reading_Archive_Tab"
 READING_ARCHIVE_CALLING_DESCRIPTOR = "markup://c:PED_Reading_Archive_Tab"
 READING_ARCHIVE_RELATED_DEFINITIONS = (
@@ -387,8 +388,13 @@ class ReteleElectricePortal:
             raise PortalError(f"Aura action failed with state {action_result.get('state', 'UNKNOWN')}")
         return action_result.get("returnValue")
 
-    def _call_vf_ws_async(self, method_name: str, method_params: list[Any]) -> Any:
-        vf_url = f"{BASE_URL}/{CURVE_VF_PAGE}"
+    def _call_vf_ws_async(
+        self,
+        method_name: str,
+        method_params: list[Any],
+        vf_page_name: str = CURVE_VF_PAGE,
+    ) -> Any:
+        vf_url = f"{BASE_URL}/{vf_page_name}"
         get_response = self.session.get(vf_url, allow_redirects=True, timeout=self.timeout)
         get_response.raise_for_status()
         soup = BeautifulSoup(get_response.text, "html.parser")
@@ -402,7 +408,7 @@ class ReteleElectricePortal:
 
         form = soup.find("form")
         form_id = form.get("id", "j_id0:j_id2") if form else "j_id0:j_id2"
-        form_action = form.get("action", f"/{CURVE_VF_PAGE}") if form else f"/{CURVE_VF_PAGE}"
+        form_action = form.get("action", f"/{vf_page_name}") if form else f"/{vf_page_name}"
         action_id = self._extract_a4j_action_id(get_response.text, form_id)
 
         post_data: dict[str, str] = {
