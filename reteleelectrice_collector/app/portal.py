@@ -706,7 +706,15 @@ def summarize_component_metadata(
 
 def sanitize_reading_archive_response(value: Any, max_items: int = 200) -> Any:
     """Keep reading values and register metadata, but redact account identifiers."""
-    sensitive = {"pod", "podid", "podval", "cnp", "cui"}
+    sensitive = {
+        "pod",
+        "podid",
+        "podval",
+        "cnp",
+        "cui",
+        "finalcustomercode",
+        "customercode",
+    }
 
     def walk(item: Any, key: str = "", depth: int = 0) -> Any:
         if depth > 8:
