@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Validate the Reading Archive register mapping against official 15-minute curves: `EA` is cumulative grid consumption/import and `EAP` is cumulative grid production/export.
+- Persist the newest official cumulative indexes to `reteleelectrice_meter_index` with reading date, reading type, meter serial and meter constant.
+- Refresh the official index once per POD after load-curve synchronization when portal request budget remains.
+- Expose the latest stored reading through collector status for downstream Energy Reporting/Home Assistant use.
+- Keep sensitive customer identifiers out of InfluxDB and persisted state.
+
 ## 0.3.7
 
 - Fix **Probe latest meter readings** to call the dedicated Reading Archive Visualforce page `PED_ProxyCallWSAsynSingleSelf_VF` instead of the load-curve page.
