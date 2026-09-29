@@ -21,7 +21,7 @@ from influx import InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
@@ -338,55 +338,72 @@ def _reading_datetime(value: Any, timezone_name: str) -> datetime | None:
     return None
 
 
+def meter_indexes(
+    payload: dict[str, Any],
+    pod: str,
+    timezone_name: str,
+) -> list[dict[str, Any]]:
+    readings = payload.get("XML_Readings")
+    if not isinstance(readings, list):
+        return []
+
+    by_timestamp: dict[int, dict[str, Any]] = {}
+    for raw_reading in readings:
+        if not isinstance(raw_reading, dict):
+            continue
+        reading_dt = _reading_datetime(raw_reading.get("measureDate"), timezone_name)
+        if reading_dt is None:
+            continue
+
+        meters = raw_reading.get("meter")
+        if not isinstance(meters, list):
+            meters = []
+
+        values: dict[str, float] = {}
+        for meter in meters:
+            if not isinstance(meter, dict):
+                continue
+            register = str(meter.get("typeofenergy_measured") or "").strip().upper()
+            if register not in {"EA", "EAP"}:
+                continue
+            number = _reading_number(meter.get("Value"))
+            if number is not None:
+                values[register] = number
+
+        if "EA" not in values and "EAP" not in values:
+            continue
+
+        timestamp = int(reading_dt.astimezone(timezone.utc).timestamp())
+        item = {
+            "pod": pod,
+            "timestamp": timestamp,
+            "measure_date": str(raw_reading.get("measureDate") or ""),
+            "reading_type": str(raw_reading.get("typeOfReading") or ""),
+            "meter_serial": str(raw_reading.get("SerialNumber") or ""),
+            "constant": str(raw_reading.get("constanta") or ""),
+            "import_index_kwh": values.get("EA"),
+            "export_index_kwh": values.get("EAP"),
+        }
+
+        existing = by_timestamp.get(timestamp)
+        if existing is None:
+            by_timestamp[timestamp] = item
+            continue
+        existing_real = str(existing.get("reading_type") or "").strip().lower() == "real"
+        item_real = str(item.get("reading_type") or "").strip().lower() == "real"
+        if item_real and not existing_real:
+            by_timestamp[timestamp] = item
+
+    return [by_timestamp[key] for key in sorted(by_timestamp)]
+
+
 def latest_meter_index(
     payload: dict[str, Any],
     pod: str,
     timezone_name: str,
 ) -> dict[str, Any] | None:
-    readings = payload.get("XML_Readings")
-    if not isinstance(readings, list):
-        return None
-
-    candidates: list[tuple[datetime, dict[str, Any]]] = []
-    for reading in readings:
-        if not isinstance(reading, dict):
-            continue
-        reading_dt = _reading_datetime(reading.get("measureDate"), timezone_name)
-        if reading_dt is not None:
-            candidates.append((reading_dt, reading))
-    if not candidates:
-        return None
-
-    reading_dt, latest = max(candidates, key=lambda item: item[0])
-    meters = latest.get("meter")
-    if not isinstance(meters, list):
-        meters = []
-
-    values: dict[str, float] = {}
-    for meter in meters:
-        if not isinstance(meter, dict):
-            continue
-        register = str(meter.get("typeofenergy_measured") or "").strip().upper()
-        if register not in {"EA", "EAP"}:
-            continue
-        number = _reading_number(meter.get("Value"))
-        if number is not None:
-            values[register] = number
-
-    if "EA" not in values and "EAP" not in values:
-        return None
-
-    return {
-        "pod": pod,
-        "timestamp": int(reading_dt.astimezone(timezone.utc).timestamp()),
-        "measure_date": str(latest.get("measureDate") or ""),
-        "reading_type": str(latest.get("typeOfReading") or ""),
-        "meter_serial": str(latest.get("SerialNumber") or ""),
-        "constant": str(latest.get("constanta") or ""),
-        "import_index_kwh": values.get("EA"),
-        "export_index_kwh": values.get("EAP"),
-    }
-
+    readings = meter_indexes(payload, pod, timezone_name)
+    return readings[-1] if readings else None
 
 def selected_pods(portal: ReteleElectricePortal, pod_option: str) -> list[str]:
     configured = [value.strip() for value in pod_option.split(",") if value.strip()]
@@ -544,22 +561,24 @@ def sync_once(options: dict[str, Any]) -> dict[str, Any]:
                         today - timedelta(days=120),
                         today,
                     )
-                    reading = latest_meter_index(
+                    readings = meter_indexes(
                         archive_payload,
                         pod,
                         str(options["timezone"]),
                     )
-                    if reading is not None:
-                        influx.write_meter_index(
-                            reading,
+                    if readings:
+                        written_indexes = influx.write_meter_indexes(
+                            readings,
                             str(options["influxdb_index_measurement"]),
                         )
+                        reading = readings[-1]
                         latest_meter_readings[pod] = reading
                         state["latest_meter_readings"] = latest_meter_readings
                         save_state(state)
                         LOG.info(
-                            "POD %s: official indexes dated %s stored (EA/import=%s, EAP/export=%s)",
+                            "POD %s: stored %d official index readings; latest %s (EA/import=%s, EAP/export=%s)",
                             pod,
+                            written_indexes,
                             reading.get("measure_date"),
                             reading.get("import_index_kwh"),
                             reading.get("export_index_kwh"),
