@@ -10,7 +10,7 @@ sys.path.insert(0, str(APP))
 
 from influx import InfluxError, InfluxWriter, meter_index_to_line, point_to_line
 from normalize import normalize_curve_payload
-from portal import ReteleElectricePortal, parse_a4j_response, sanitize_reading_archive_response, summarize_component_metadata
+from portal import ReteleElectricePortal, parse_a4j_response
 from run import (
     PortalRateLimitError,
     backfill_start_for_pod,
@@ -53,89 +53,6 @@ class ParserTests(unittest.TestCase):
             ReteleElectricePortal._extract_pod_values(value), {"RO00TESTPOD123456"}
         )
 
-    def test_component_metadata_probe_discards_account_values(self):
-        raw = {
-            "descriptor": "markup://c:PED_Reading_Archive_Tab",
-            "controller": {
-                "descriptor": "apex://PED_ServizidiMisuraController/ACTION$PODDetails",
-                "actionDefs": {
-                    "GetArchive": {
-                        "descriptor": "apex://PED_ServizidiMisuraController/ACTION$GetArchive"
-                    }
-                },
-            },
-            "accountData": {
-                "pod": "RO00SECRET123456",
-                "cnp": "1234567890123",
-                "index": "98765.432",
-            },
-        }
-        raw["controllerCode"] = (
-            "function loadArchive(){"
-            "event.setParams({methodName:'PED_csvReadArchiveEAP'});"
-            "item.sParameterName='podId';"
-            "callAsync('FindOutMeterReadingData');"
-            "var pod='RO00SECRET123456';}"
-        )
-        summary = summarize_component_metadata(
-            raw,
-            include_literal_candidates=True,
-        )
-        serialized = json.dumps(summary)
-        self.assertIn("PODDetails", summary["action_names"])
-        self.assertIn("GetArchive", summary["action_names"])
-        self.assertIn("accountData", summary["schema_keys"])
-        self.assertIn("loadArchive", summary["identifier_signals"])
-        self.assertIn("FindOutMeterReadingData", summary["identifier_signals"])
-        self.assertTrue(
-            any(
-                "loadArchive" in context
-                and "FindOutMeterReadingData" in context
-                and "pod" in context
-                for context in summary["identifier_contexts"]
-            )
-        )
-        self.assertIn(
-            "methodName=PED_csvReadArchiveEAP",
-            summary["safe_relations"],
-        )
-        self.assertIn("sParameterName=podId", summary["safe_relations"])
-        self.assertIn(
-            "methodName~PED_csvReadArchiveEAP",
-            summary["anchor_literal_candidates"],
-        )
-        self.assertIn(
-            "sParameterName~podId",
-            summary["anchor_literal_candidates"],
-        )
-        self.assertTrue(
-            any(
-                "methodName" in context
-                and "PED_csvReadArchiveEAP" in context
-                for context in summary["target_token_contexts"]
-            )
-        )
-        self.assertTrue(
-            any(
-                "sParameterName" in context
-                and "podId" in context
-                for context in summary["target_token_contexts"]
-            )
-        )
-        self.assertLessEqual(len(summary["target_token_contexts"]), 24)
-        self.assertNotIn("RO00SECRET123456", serialized)
-        self.assertNotIn("1234567890123", serialized)
-        self.assertNotIn("98765.432", serialized)
-
-    def test_literal_candidates_disabled_for_instance_style_payload(self):
-        raw = {
-            "methodName": "PED_ReadArchive",
-            "podId": "RO00SECRET123456",
-        }
-        summary = summarize_component_metadata(raw)
-        self.assertEqual(summary["anchor_literal_candidates"], [])
-        self.assertEqual(summary["target_token_contexts"], [])
-
     def test_reading_archive_service_uses_dedicated_vf_page_and_identity(self):
         portal = ReteleElectricePortal("user", "password")
         portal._call_vf_ws_async = Mock(return_value={"result": "OK"})
@@ -168,115 +85,6 @@ class ParserTests(unittest.TestCase):
             parse_a4j_response(page),
             {"result": "OK", "XML_Readings": []},
         )
-
-    def test_reading_archive_sanitizer_preserves_register_values(self):
-        raw = {
-            "result": "OK",
-            "POD": "RO00SECRET123456",
-            "cnp": "1234567890123",
-            "finalCustomerCode": "CUSTOMER-SECRET",
-            "records": [
-                {
-                    "measureDate": "2026-09-01",
-                    "SerialNumber": "METER-42",
-                    "typeofenergy_measured": "EAN",
-                    "Index": "12345.678",
-                },
-                {
-                    "measureDate": "2026-09-01",
-                    "typeofenergy_measured": "EAP",
-                    "Index": 2345.67,
-                },
-            ],
-        }
-
-        sanitized = sanitize_reading_archive_response(raw)
-        serialized = json.dumps(sanitized)
-
-        self.assertEqual(sanitized["POD"], "[redacted]")
-        self.assertEqual(sanitized["cnp"], "[redacted]")
-        self.assertIn("12345.678", serialized)
-        self.assertIn("2345.67", serialized)
-        self.assertIn("EAN", serialized)
-        self.assertIn("EAP", serialized)
-        self.assertIn("METER-42", serialized)
-        self.assertNotIn("RO00SECRET123456", serialized)
-        self.assertNotIn("1234567890123", serialized)
-        self.assertNotIn("CUSTOMER-SECRET", serialized)
-
-    def test_reading_archive_probe_uses_component_controller_actions(self):
-        portal = ReteleElectricePortal("user", "password")
-        portal._aura_call = Mock(
-            side_effect=[
-                {
-                    "descriptor": "markup://c:PED_Reading_Archive_Tab",
-                    "controller": "apex://PED_ServizidiMisuraController/ACTION$ArchiveRows",
-                },
-                {
-                    "descriptor": "markup://c:PED_Reading_Archive_Tab",
-                    "controller": "apex://PED_ServizidiMisuraController/ACTION$PODDetails",
-                    "sensitive": "RO00SECRET123456",
-                },
-                {
-                    "descriptor": "markup://c:PED_CallWSAsyncEvent",
-                    "methodName": "ReadArchiveService",
-                },
-                {
-                    "descriptor": "markup://c:PED_CallbackWSAsyncEvent",
-                    "attribute": "XML_Readings",
-                },
-                RuntimeError("dates event unavailable"),
-                {
-                    "descriptor": "markup://c:PED_Pagination",
-                    "currentPage": 1,
-                },
-            ]
-        )
-
-        result = portal.probe_reading_archive_component()
-
-        self.assertEqual(result["component"], "c:PED_Reading_Archive_Tab")
-        self.assertEqual(
-            result["calling_descriptor"], "markup://c:PED_Reading_Archive_Tab"
-        )
-        self.assertIn("ArchiveRows", result["definition"]["action_names"])
-        self.assertIn("PODDetails", result["instance"]["action_names"])
-        self.assertIn("methodName", result["related_definitions"]["c:PED_CallWSAsyncEvent"]["schema_keys"])
-        self.assertIn("XML_Readings", result["related_definitions"]["c:PED_CallbackWSAsyncEvent"]["identifier_signals"])
-        self.assertEqual(
-            result["related_definitions"]["c:PED_Dates_event"]["error_type"],
-            "RuntimeError",
-        )
-        self.assertIn("currentPage", result["related_definitions"]["c:PED_Pagination"]["schema_keys"])
-        self.assertNotIn("RO00SECRET123456", json.dumps(result))
-
-        calls = portal._aura_call.call_args_list
-        self.assertEqual(
-            calls[0].kwargs["descriptor"],
-            "aura://ComponentController/ACTION$getComponentDef",
-        )
-        self.assertEqual(calls[0].kwargs["params"], {"name": "c:PED_Reading_Archive_Tab"})
-        self.assertEqual(
-            calls[1].kwargs["descriptor"],
-            "aura://ComponentController/ACTION$getComponent",
-        )
-        self.assertEqual(
-            calls[2].kwargs["params"],
-            {"name": "c:PED_CallWSAsyncEvent"},
-        )
-        self.assertEqual(
-            calls[3].kwargs["params"],
-            {"name": "c:PED_CallbackWSAsyncEvent"},
-        )
-        self.assertEqual(
-            calls[4].kwargs["params"],
-            {"name": "c:PED_Dates_event"},
-        )
-        self.assertEqual(
-            calls[5].kwargs["params"],
-            {"name": "c:PED_Pagination"},
-        )
-
 
     def test_latest_meter_index_maps_ea_to_import_and_eap_to_export(self):
         payload = {
