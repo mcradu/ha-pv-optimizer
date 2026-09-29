@@ -92,3 +92,12 @@ Do not paste browser `sid`, ViewState, CSRF, cookies, or copied cURL requests in
 ## Portal compatibility
 
 This is an unofficial collector. It uses the portal's Salesforce Experience Cloud and Visualforce/Aura interfaces. Those interfaces may change without notice. A portal change should fail visibly through the status page and logs rather than silently producing fabricated data.
+
+
+## 0.3.7 probe fix
+
+The first 0.3.6 live probe showed `A4J response did not contain asyncResponse JSON`. The issue was the request contract, not proof that the archive was empty: the probe was posting `RetriveSingleSelf` through the load-curve Visualforce page with only POD/start/end.
+
+Version 0.3.7 uses the dedicated Reading Archive page, obtains the POD account identity through the already authenticated POD-details flow, sends the full six-parameter Reading Archive request and accepts the additional Salesforce partial-response formats used by that page.
+
+The result remains diagnostic-only. Do not use a register for declaration until a successful live response confirms its meaning.
