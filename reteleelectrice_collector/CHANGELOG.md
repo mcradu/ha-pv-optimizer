@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7
+
+- Fix **Probe latest meter readings** to call the dedicated Reading Archive Visualforce page `PED_ProxyCallWSAsynSingleSelf_VF` instead of the load-curve page.
+- Supply the POD account identity and the six-parameter `RetriveSingleSelf` contract expected by the Reading Archive endpoint.
+- Format archive dates as portal-local `DD/MM/YYYY HH:MM:SS`.
+- Add parser fallbacks for generic result/response nodes and CDATA-wrapped JSON.
+- Keep the path diagnostic-only until the live register mapping is validated.
+
 ## 0.3.6
 
 - Add a manual **Probe latest meter readings** diagnostic using the reading-archive service name `RetriveSingleSelf` discovered from the portal component.
