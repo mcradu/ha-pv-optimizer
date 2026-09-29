@@ -20,7 +20,7 @@ from influx import InfluxWriter
 from normalize import normalize_curve_payload
 from portal import ReteleElectricePortal, sanitize_reading_archive_response
 
-VERSION = "0.3.6"
+VERSION = "0.3.7"
 OPTIONS_PATH = Path("/data/options.json")
 STATE_PATH = Path("/data/state.json")
 HTTP_PORT = 8098
@@ -561,7 +561,14 @@ def probe_latest_meter_readings(options: dict[str, Any]) -> dict[str, Any]:
         range_start = local_today - timedelta(days=120)
         readings: list[dict[str, Any]] = []
         for pod in pods:
-            raw = portal.get_reading_archive(pod, range_start, local_today)
+            customer_personal_id, customer_company_id = portal.get_pod_identity(pod)
+            raw = portal.get_reading_archive(
+                pod,
+                customer_personal_id,
+                customer_company_id,
+                range_start,
+                local_today,
+            )
             readings.append(
                 {
                     "pod_suffix": pod[-4:],

@@ -20,6 +20,7 @@ BASE_URL = "https://contulmeu.reteleelectrice.ro"
 LOGIN_PAGE = f"{BASE_URL}/PEDRO_SiteLogin"
 AURA_URL = f"{BASE_URL}/s/sfsites/aura"
 CURVE_VF_PAGE = "PED_ProxyCallWSAsync_Curve_VF"
+READING_ARCHIVE_VF_PAGE = "PED_ProxyCallWSAsynSingleSelf_VF"
 READING_ARCHIVE_COMPONENT = "c:PED_Reading_Archive_Tab"
 READING_ARCHIVE_CALLING_DESCRIPTOR = "markup://c:PED_Reading_Archive_Tab"
 READING_ARCHIVE_RELATED_DEFINITIONS = (
@@ -301,12 +302,23 @@ class ReteleElectricePortal:
     def get_reading_archive(
         self,
         pod: str,
+        customer_personal_id: str,
+        customer_company_id: str,
         start_date: date,
         end_date: date,
     ) -> Any:
+        start_text = start_date.strftime("%d/%m/%Y 00:00:00")
+        end_text = end_date.strftime("%d/%m/%Y 23:59:59")
+        if customer_personal_id:
+            params = ["", "", customer_personal_id, pod, start_text, end_text]
+        elif customer_company_id:
+            params = ["", customer_company_id, "", pod, start_text, end_text]
+        else:
+            params = ["", "", "", pod, start_text, end_text]
         return self._call_vf_ws_async(
             "RetriveSingleSelf",
-            [pod, start_date.isoformat(), end_date.isoformat()],
+            params,
+            vf_page_name=READING_ARCHIVE_VF_PAGE,
         )
 
     def get_load_curves(
@@ -387,8 +399,13 @@ class ReteleElectricePortal:
             raise PortalError(f"Aura action failed with state {action_result.get('state', 'UNKNOWN')}")
         return action_result.get("returnValue")
 
-    def _call_vf_ws_async(self, method_name: str, method_params: list[Any]) -> Any:
-        vf_url = f"{BASE_URL}/{CURVE_VF_PAGE}"
+    def _call_vf_ws_async(
+        self,
+        method_name: str,
+        method_params: list[Any],
+        vf_page_name: str = CURVE_VF_PAGE,
+    ) -> Any:
+        vf_url = f"{BASE_URL}/{vf_page_name}"
         get_response = self.session.get(vf_url, allow_redirects=True, timeout=self.timeout)
         get_response.raise_for_status()
         soup = BeautifulSoup(get_response.text, "html.parser")
@@ -402,7 +419,7 @@ class ReteleElectricePortal:
 
         form = soup.find("form")
         form_id = form.get("id", "j_id0:j_id2") if form else "j_id0:j_id2"
-        form_action = form.get("action", f"/{CURVE_VF_PAGE}") if form else f"/{CURVE_VF_PAGE}"
+        form_action = form.get("action", f"/{vf_page_name}") if form else f"/{vf_page_name}"
         action_id = self._extract_a4j_action_id(get_response.text, form_id)
 
         post_data: dict[str, str] = {
@@ -749,4 +766,32 @@ def parse_a4j_response(response_text: str) -> Any:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PortalError("A4J JavaScript result could not be decoded") from exc
 
-    raise PortalError("A4J response did not contain asyncResponse JSON")
+    # Reading Archive pages can return the payload in a generic result/response node.
+    generic = soup.find(id=re.compile(r"(?:result|response)$", re.I))
+    if generic:
+        raw = generic.get_text(strip=True)
+        if raw:
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                pass
+
+    # Some Salesforce partial-page responses wrap the JSON in CDATA.
+    for candidate in re.findall(r"<!\[CDATA\[(.*?)\]\]>", response_text, re.DOTALL):
+        raw = candidate.strip()
+        if not raw:
+            continue
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            nested = re.search(r"[\[{].*[}\]]", raw, re.DOTALL)
+            if nested:
+                try:
+                    return json.loads(nested.group(0))
+                except json.JSONDecodeError:
+                    pass
+
+    raise PortalError(
+        "A4J response did not contain a parseable JSON result "
+        f"(response length {len(response_text)})"
+    )
