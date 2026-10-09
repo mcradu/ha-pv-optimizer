@@ -89,3 +89,5 @@ No decisions, SOC thresholds, export power, charge requests or sensor
 publishing are changed by this feature. It is observation-only even if the
 main add-on's \`shadow_mode\` were later changed; any future switch-over
 requires a separate reviewed PR and validation. Model backtest is preliminary.
+
+The comparison fields are also appended to existing `pv_optimizer_charge` InfluxDB telemetry on every evaluation when available; `load_forecast_shadow_available` marks absent data without fabricating kWh. These historical snapshots support a 24-hour shadow review. Each row remains read-only decision evidence and does not alter the charge engine.
