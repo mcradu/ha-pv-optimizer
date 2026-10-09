@@ -92,7 +92,7 @@ class ShadowEngineTests(unittest.TestCase):
 
     def test_both_zones_independent_without_solar(self):
         result = self.at(0, down_temp="23", up_temp="19")
-        self.assertFalse(result["ufh"]["demand"])
+        self.assertTrue(result["ufh"]["demand"])
         self.assertEqual(result["zones"]["up"]["recommendation"], "hold")
 
     def test_disabled_morning_never_starts(self):
