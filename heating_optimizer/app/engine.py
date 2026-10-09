@@ -101,6 +101,20 @@ def number(states: dict, key: str) -> float | None:
         return None
 
 
+def fault_code(states: dict, zone: str) -> float | None:
+    """Prefer the device's direct local fault bitmap, not a legacy template."""
+    raw = states.get(ENTITY_IDS["ac_" + zone], {})
+    if isinstance(raw, dict):
+        attrs = raw.get("attributes", {})
+        if isinstance(attrs, dict) and attrs.get("tuya_fault_bitmap") is not None:
+            try:
+                return float(attrs["tuya_fault_bitmap"])
+            except (TypeError, ValueError):
+                return None
+    # Compatibility only until the YAML-derived observability sensors are removed.
+    return number(states, "fault_" + zone)
+
+
 def _observation(states: dict, key: str) -> dict:
     raw = states.get(ENTITY_IDS[key], {})
     if not isinstance(raw, dict):
@@ -144,7 +158,7 @@ def _zone(
     since = max(now_ts - float(current.get("last_transition", 0)), 0)
     observed = state(states, "ac_" + zone)
     room = number(states, zone + "_temp")
-    fault = number(states, "fault_" + zone)
+    fault = fault_code(states, zone)
     pv_status = state(states, "pv_reachable")
     reason: list[str] = []
     action = "hold"
