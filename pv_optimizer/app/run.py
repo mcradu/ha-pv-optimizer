@@ -87,14 +87,14 @@ class Runtime:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
-        # A pre-0.2.11 add-on may retain 180 minutes in Supervisor
+        # A pre-0.2.12 add-on may retain 180 minutes in Supervisor
         # options.json after upgrading. Keep a *minimum* 24-hour effective
         # lookback regardless of that legacy value so the cycle is complete.
         self.options["baseline_window_minutes"] = max(
             1440, int(self.options.get("baseline_window_minutes", 1440))
         )
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.11 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.12 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -380,7 +380,7 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.11",
+                "version": "0.2.12",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
@@ -514,7 +514,7 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.11",
+            "version": "0.2.12",
             "shadow": True,
             "export_price_ron_per_kwh": float(self.options["export_price_ron_per_kwh"]),
             "import_price_ron_per_kwh": float(self.options["import_price_ron_per_kwh"]),
@@ -678,7 +678,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.11"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.12"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -721,7 +721,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.11 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.12 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],
