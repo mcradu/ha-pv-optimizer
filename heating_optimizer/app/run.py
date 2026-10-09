@@ -173,7 +173,7 @@ def import_legacy_settings(states: dict) -> dict:
     for day in DAYS:
         entity = "input_datetime.heating_optimizer_morning_target_time_" + day
         value = states.get(entity, {}).get("state")
-        if isinstance(value, str) and re.fullmatch(r"(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?", value):
+        if isinstance(value, str) and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?", value):
             schedule[day] = value[:5]
     if len(schedule) == 7:
         imported["morning_schedule"] = schedule
