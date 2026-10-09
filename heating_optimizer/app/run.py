@@ -47,10 +47,14 @@ RANGES = {
     "solar_stop_down_c": (18, 25),
     "solar_start_up_c": (18, 25),
     "solar_stop_up_c": (18, 25),
-    "solar_headroom_kwh": (0, 20),
-    "solar_surplus_w": (0, 5000),
-    "solar_max_grid_import_w": (0, 2000),
-    "solar_max_battery_discharge_w": (0, 2000),
+    "solar_headroom_down_kwh": (0, 20),
+    "solar_headroom_up_kwh": (0, 20),
+    "solar_surplus_down_w": (0, 5000),
+    "solar_surplus_up_w": (0, 5000),
+    "solar_max_grid_down_w": (0, 2000),
+    "solar_max_grid_up_w": (0, 2000),
+    "solar_max_battery_down_w": (0, 2000),
+    "solar_max_battery_up_w": (0, 2000),
     "ufh_target_c": (18, 25),
     "comfort_band_c": (0.1, 1),
     "gas_price_ron_per_kwh": (0, 2),
@@ -115,6 +119,76 @@ def validate_settings(settings: dict) -> dict:
     return result
 
 
+# The old YAML helpers are used only as ONE-TIME input at initial install.
+# Once persisted, all configuration is owned by this add-on.
+LEGACY_SETTINGS = {
+    "morning_enabled": "input_boolean.heating_optimizer_ground_floor_ac_schedule_enabled",
+    "comfort_fallback_enabled": "input_boolean.heating_optimizer_ground_floor_ac_comfort_fallback_enabled",
+    "solar_down_enabled": "input_boolean.heating_optimizer_ground_floor_ac_solar_enabled",
+    "solar_up_enabled": "input_boolean.heating_optimizer_upstairs_ac_solar_enabled",
+    "morning_target_c": "input_number.heating_optimizer_ground_floor_morning_target",
+    "morning_warming_rate_c_per_h": "input_number.heating_optimizer_ground_floor_morning_warming_rate",
+    "morning_safety_minutes": "input_number.heating_optimizer_ground_floor_morning_safety_margin",
+    "morning_fallback_deficit_c": "input_number.heating_optimizer_ground_floor_morning_fallback_deficit",
+    "morning_reserve_soc": "input_number.heating_optimizer_morning_battery_reserve",
+    "absolute_min_soc": "input_number.heating_optimizer_battery_absolute_min_soc",
+    "battery_capacity_kwh": "input_number.heating_optimizer_battery_usable_capacity",
+    "morning_base_load_kw": "input_number.heating_optimizer_morning_expected_base_load",
+    "solar_recovery_hours": "input_number.heating_optimizer_morning_solar_recovery_hours",
+    "morning_ac_kw": "input_number.heating_optimizer_ground_floor_ac_estimated_average_input_power",
+    "solar_start_down_c": "input_number.heating_optimizer_ground_floor_ac_solar_start_temperature",
+    "solar_stop_down_c": "input_number.heating_optimizer_ground_floor_ac_solar_stop_temperature",
+    "solar_start_up_c": "input_number.heating_optimizer_upstairs_ac_solar_start_temperature",
+    "solar_stop_up_c": "input_number.heating_optimizer_upstairs_ac_solar_stop_temperature",
+    "solar_headroom_down_kwh": "input_number.heating_optimizer_ground_floor_ac_solar_min_headroom",
+    "solar_headroom_up_kwh": "input_number.heating_optimizer_upstairs_ac_solar_min_headroom",
+    "solar_surplus_down_w": "input_number.heating_optimizer_ground_floor_ac_solar_start_surplus",
+    "solar_surplus_up_w": "input_number.heating_optimizer_upstairs_ac_solar_start_surplus",
+    "solar_max_grid_down_w": "input_number.heating_optimizer_ground_floor_ac_solar_max_grid_import",
+    "solar_max_grid_up_w": "input_number.heating_optimizer_upstairs_ac_solar_max_grid_import",
+    "solar_max_battery_down_w": "input_number.heating_optimizer_ground_floor_ac_solar_max_battery_discharge",
+    "solar_max_battery_up_w": "input_number.heating_optimizer_upstairs_ac_solar_max_battery_discharge",
+    "ufh_target_c": "input_number.heating_optimizer_target_temperature",
+    "comfort_band_c": "input_number.heating_optimizer_comfort_band",
+    "gas_price_ron_per_kwh": "input_number.heating_optimizer_gas_price",
+    "gas_efficiency_pct": "input_number.heating_optimizer_boiler_efficiency",
+}
+
+
+def import_legacy_settings(states: dict) -> dict:
+    imported = {}
+    for key, entity in LEGACY_SETTINGS.items():
+        value = states.get(entity, {}).get("state")
+        if not isinstance(value, str) or value in ("unknown", "unavailable", ""):
+            continue
+        if isinstance(DEFAULT_SETTINGS[key], bool):
+            if value in ("on", "off"):
+                imported[key] = value == "on"
+        else:
+            try:
+                imported[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+    schedule = {}
+    for day in DAYS:
+        entity = "input_datetime.heating_optimizer_morning_target_time_" + day
+        value = states.get(entity, {}).get("state")
+        if isinstance(value, str) and re.fullmatch(r"(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?", value):
+            schedule[day] = value[:5]
+    if len(schedule) == 7:
+        imported["morning_schedule"] = schedule
+    # Legacy entities could contain invalid/inconsistent values; defaults
+    # and validated subsets are safer than failing the entire first poll.
+    valid = {}
+    for key, value in imported.items():
+        try:
+            validate_settings({**valid, key: value})
+        except ValueError:
+            continue
+        valid[key] = value
+    return valid
+
+
 class Runtime:
     def __init__(
         self,
@@ -147,6 +221,11 @@ class Runtime:
         try:
             states = self.client.all_states()
             with self.lock:
+                if not self.settings_path.exists():
+                    imported = import_legacy_settings(states)
+                    self.settings = validate_settings({**self.settings, **imported})
+                    atomic_json(self.settings_path, self.settings)
+                    LOG.info("Imported %d legacy Heating Optimizer settings", len(imported))
                 decision = evaluate(states, self.settings, self.tracker, now)
                 events = self.status.get("events", [])
                 signature = tuple(
@@ -227,8 +306,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/health":
             status = RUNTIME.get_status()
-            self._json({"status": status["health"], "mode": "shadow", "version": "0.1.0"},
-                       200 if status["health"] != "degraded" else 503)
+            # The process is healthy even if Home Assistant is temporarily
+            # unreachable; avoid a watchdog restart loop during an outage.
+            self._json({"status": "ok", "source_health": status["health"],
+                        "mode": "shadow", "version": "0.1.0"})
         elif path == "/api/status":
             self._json(RUNTIME.get_status())
         elif path == "/api/settings":
