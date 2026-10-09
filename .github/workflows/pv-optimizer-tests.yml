@@ -1,0 +1,28 @@
+name: PV optimizer validation
+
+on:
+  push:
+    paths:
+      - 'pv_optimizer/**'
+      - '.github/workflows/pv-optimizer-tests.yml'
+  pull_request:
+    paths:
+      - 'pv_optimizer/**'
+      - '.github/workflows/pv-optimizer-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compile Python sources
+        run: python -m compileall -q pv_optimizer/app pv_optimizer/tests
+      - name: Unit tests
+        run: python -m unittest discover -s pv_optimizer/tests -p 'test_*.py' -v
