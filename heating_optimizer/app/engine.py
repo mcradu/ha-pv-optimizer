@@ -198,14 +198,18 @@ def _zone(
         reserve_stop = soc is not None and soc <= max(
             float(settings["absolute_min_soc"]), float(settings["morning_reserve_soc"])
         )
-        if fault_stop or reserve_stop:
+        missing_critical = not has_sensor or fault is None or soc is None
+        if fault_stop or reserve_stop or missing_critical:
             action = "would_stop"
-            reason.append("hardware_fault" if fault_stop else "battery_reserve_guard")
+            reason.append(
+                "hardware_fault" if fault_stop else
+                "battery_reserve_guard" if reserve_stop else "critical_telemetry_missing"
+            )
         elif since < settings["min_on_seconds"]:
             reason.append("minimum_ON_remaining_%ds" % int(settings["min_on_seconds"] - since))
         else:
             active_mode = current.get("mode")
-            if pv_status == "off" and pv_off_elapsed >= settings["pv_off_stable_seconds"]:
+            if pv_status != "on" and pv_off_elapsed >= settings["pv_off_stable_seconds"]:
                 action = "would_stop"
                 reason.append("sunset_recharge_forecast_adverse")
             elif active_mode == "morning":
@@ -369,7 +373,7 @@ def evaluate(states: dict, settings: dict, tracker: dict, now: datetime) -> dict
     zones = {
         zone: _zone(
             zone, now, settings, states, tracker,
-            pv_elapsed if pv_true else 0, pv_elapsed if pv_true is False else 0,
+            pv_elapsed if pv_true else 0, pv_elapsed if pv_true is not True else 0,
             morning, solar
         ) for zone in ("down", "up")
     }
