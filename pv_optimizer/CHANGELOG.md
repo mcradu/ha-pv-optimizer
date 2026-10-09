@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.11
+
+- Use the last **24 hours** of heater-free household-load observations instead of
+  three hours, capturing the normal daytime and overnight load cycle.
+- Preserve all observations across the 24-hour window: the previous 720-point
+  storage cap silently discarded most of a full day at the default 30s poll.
+- Average each observed hourly band first and then average those hourly means
+  so one hour with many samples cannot dominate the household baseline.
+- Continue excluding AC and underfloor-heating periods and the first three
+  minutes after heating; do not confuse temporary compressor consumption with
+  the permanent baseload projected until sunset.
+- Maintain backward compatibility with stored 180-minute add-on options:
+  runtime enforces at least 1440 minutes even when old Supervisor settings remain.
+  Diagnostics now include lookback, hourly coverage and oldest sample age.
+- New installations use 1440 minutes by default. Existing installations should
+  also update the Configuration UI to 1440 for clarity.
+- No active inverter controls; the charge optimizer remains in shadow mode.
+
 ## 0.2.10
 
 - Replace the all-day instantaneous household load extrapolation with two phases:
