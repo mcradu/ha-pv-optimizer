@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.12
+- Add an optional read-only forecast comparator in the Charging UI and /api/status.
+- Fetch corrected household hourly forecast from the trusted NAS only once per 15 minutes.
+- Compare expected/upper load with the existing horizon-to-sunset and static night-load assumptions.
+- Missing, stale, low-confidence or incomplete forecasts fail closed; do not affect battery logic.
+- Default disabled; no actuation or optimizer decision changes.
+
 ## 0.2.11
 
 - Use the last **24 hours** of heater-free household-load observations instead of

@@ -14,6 +14,7 @@ from engine import Inputs, calculate
 from charge_engine import ChargeInputs, calculate_charge
 from ha_client import HomeAssistantClient
 from telemetry import InfluxTelemetry
+from forecast_shadow import compare_shadow, read_forecast, _parse
 
 ROOT = Path(__file__).parent
 OPTIONS_PATH = Path("/data/options.json")
@@ -55,6 +56,8 @@ DEFAULTS = {
     "influxdb_username": "",
     "influxdb_password": "",
     "shadow_mode": True,
+    "load_forecast_shadow_enabled": False,
+    "load_forecast_shadow_url": "http://192.168.0.10:8100/api/v1/forecast",
     "entities": {
         "battery_soc": "sensor.ss_battery_soc",
         "pv_power": "sensor.ss_pv_power",
@@ -84,14 +87,14 @@ class Runtime:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
-        # A pre-0.2.11 add-on may retain 180 minutes in Supervisor
+        # A pre-0.2.12 add-on may retain 180 minutes in Supervisor
         # options.json after upgrading. Keep a *minimum* 24-hour effective
         # lookback regardless of that legacy value so the cycle is complete.
         self.options["baseline_window_minutes"] = max(
             1440, int(self.options.get("baseline_window_minutes", 1440))
         )
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.11 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.12 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -102,6 +105,8 @@ class Runtime:
             default_measurement="pv_optimizer_night_injection",
         )
         self.last_error_signature = ""
+        self.next_forecast_poll_at = 0.0
+
 
     @staticmethod
     def _load_json(path: Path, fallback: dict) -> dict:
@@ -219,6 +224,39 @@ class Runtime:
                 hours_to_target = 2.0
         return round(baseline_w, 2), min(hours_to_target, max(hours_until_sunset, 0)), down == "heat"
 
+    def _load_forecast_shadow(self, entities: dict, night: dict, charge: dict) -> dict:
+        """Best-effort 15-minute side-channel. Never changes decisions or blockers."""
+        if not self.options.get("load_forecast_shadow_enabled", False):
+            return {"state": "disabled", "used_for_control": False}
+        if time.time() < self.next_forecast_poll_at:
+            return self.state.get("load_forecast_shadow", {
+                "state": "waiting", "used_for_control": False
+            })
+        self.next_forecast_poll_at = time.time() + 900
+        now = datetime.now(timezone.utc)
+        try:
+            sun = entities.get("sun", {})
+            next_rising = sun.get("attributes", {}).get("next_rising")
+            next_setting = sun.get("attributes", {}).get("next_setting")
+            model = read_forecast(str(self.options["load_forecast_shadow_url"]))
+            result = compare_shadow(
+                model, now,
+                _parse(next_rising) if next_rising else None,
+                _parse(next_setting) if next_setting else None,
+                sun.get("state") == "below_horizon",
+                charge.get("expected_house_load_kwh"),
+                float(self.options["static_night_load_w"]),
+            )
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
+            result = {
+                "state": "unavailable",
+                "used_for_control": False,
+                "reason": str(exc)[:200],
+            }
+        self.state["load_forecast_shadow"] = result
+        self.save_state()
+        return result
+
     def poll(self) -> None:
         entity_map = self.options["entities"]
         entities: dict[str, dict] = {}
@@ -332,7 +370,16 @@ class Runtime:
         except RuntimeError as exc:
             errors.append(str(exc))
 
-        self.telemetry.append(self._telemetry_record(entities, charge_decision))
+        forecast_shadow = self._load_forecast_shadow(entities, decision, charge_decision)
+        charge_record = self._telemetry_record(entities, charge_decision)
+        charge_record["load_forecast_shadow_available"] = forecast_shadow.get("state") == "shadow_only"
+        for horizon, suffix in (("next_sunset", "sunset"), ("next_sunrise", "sunrise")):
+            projection = forecast_shadow.get(horizon) or {}
+            for key in ("expected_kwh", "upper_kwh", "legacy_kwh", "delta_vs_legacy_kwh"):
+                amount = projection.get(key)
+                if amount is not None:
+                    charge_record[f"load_forecast_{suffix}_{key}"] = amount
+        self.telemetry.append(charge_record)
         night_record = self._night_telemetry_record(entities, decision)
         self.night_telemetry.append(night_record)
         self._log_night_transition(night_record)
@@ -341,12 +388,13 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.11",
+                "version": "0.2.12",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
                 "decision": decision,
                 "charge_decision": charge_decision,
+                "load_forecast_shadow": forecast_shadow,
                 "charge_telemetry": self.telemetry.latest(100),
                 "night_telemetry": self.night_telemetry.latest(100),
                 "telemetry_error": self.telemetry.last_error or self.night_telemetry.last_error,
@@ -474,7 +522,7 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.11",
+            "version": "0.2.12",
             "shadow": True,
             "export_price_ron_per_kwh": float(self.options["export_price_ron_per_kwh"]),
             "import_price_ron_per_kwh": float(self.options["import_price_ron_per_kwh"]),
@@ -638,7 +686,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.11"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.12"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -681,7 +729,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.11 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.12 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],

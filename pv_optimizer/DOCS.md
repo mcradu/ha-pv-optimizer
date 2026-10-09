@@ -69,3 +69,25 @@ signal to Heating Optimizer.
 - Dashboard SHA-256: `8139a7be2f7966f5bfab4b2ede450ffe59ae499f3442307b52efcf1d995a99cf`
 
 The original files are not bundled because Home Assistant runtime configuration remains the source of truth during shadow comparison.
+
+
+## Corrected household load forecast (0.2.12; optional observation only)
+
+The Charge tab can display the forecast loaded from the NAS energy-load-corrector
+\`/api/v1/forecast\` read-only API. Defaults: \`load_forecast_shadow_enabled=false\`,
+\`load_forecast_shadow_url=http://192.168.0.10:8100/api/v1/forecast\`.
+Enable only after the NAS forecast service is installed and exposed on a trusted
+LAN IP (never public). The reader fetches at most once per 15 minutes with a
+3-second timeout; invalid/stale, missing-hour or low-confidence forecasts
+are unavailable rather than substituted with zero. Daytime P50 and the
+uncalibrated upper band are compared with the current charge-engine
+\`expected_house_load_kwh\` until sunset. After sunset the model P50 is
+compared with the existing \`static_night_load_w\` assumption until sunrise.
+Diagnostics and Charging UI show the comparison.
+
+No decisions, SOC thresholds, export power, charge requests or sensor
+publishing are changed by this feature. It is observation-only even if the
+main add-on's \`shadow_mode\` were later changed; any future switch-over
+requires a separate reviewed PR and validation. Model backtest is preliminary.
+
+The comparison fields are also appended to existing `pv_optimizer_charge` InfluxDB telemetry on every evaluation when available; `load_forecast_shadow_available` marks absent data without fabricating kWh. These historical snapshots support a 24-hour shadow review. Each row remains read-only decision evidence and does not alter the charge engine.
