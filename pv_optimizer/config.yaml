@@ -1,5 +1,5 @@
 name: HA PV Optimizer
-version: "0.2.10"
+version: "0.2.11"
 slug: pv_optimizer
 description: Explainable PV battery-export optimization with an integrated Web UI
 url: https://github.com/mcradu/ha-pv-optimizer
@@ -39,7 +39,7 @@ options:
   pv_available_on_w: 300
   pv_available_off_w: 100
   forecast_safety_kwh: 0.5
-  baseline_window_minutes: 180
+  baseline_window_minutes: 1440
   baseline_min_samples: 12
   baseline_fallback_w: 450
   influxdb_enabled: true
@@ -93,7 +93,7 @@ schema:
   pv_available_on_w: int(0,5000)
   pv_available_off_w: int(0,5000)
   forecast_safety_kwh: float(0,20)
-  baseline_window_minutes: int(15,720)
+  baseline_window_minutes: int(15,1440)
   baseline_min_samples: int(1,100)
   baseline_fallback_w: float(50,10000)
   influxdb_enabled: bool
