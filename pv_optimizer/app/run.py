@@ -370,11 +370,19 @@ class Runtime:
         except RuntimeError as exc:
             errors.append(str(exc))
 
-        self.telemetry.append(self._telemetry_record(entities, charge_decision))
+        forecast_shadow = self._load_forecast_shadow(entities, decision, charge_decision)
+        charge_record = self._telemetry_record(entities, charge_decision)
+        charge_record["load_forecast_shadow_available"] = forecast_shadow.get("state") == "shadow_only"
+        for horizon, suffix in (("next_sunset", "sunset"), ("next_sunrise", "sunrise")):
+            projection = forecast_shadow.get(horizon) or {}
+            for key in ("expected_kwh", "upper_kwh", "legacy_kwh", "delta_vs_legacy_kwh"):
+                amount = projection.get(key)
+                if amount is not None:
+                    charge_record[f"load_forecast_{suffix}_{key}"] = amount
+        self.telemetry.append(charge_record)
         night_record = self._night_telemetry_record(entities, decision)
         self.night_telemetry.append(night_record)
         self._log_night_transition(night_record)
-        forecast_shadow = self._load_forecast_shadow(entities, decision, charge_decision)
 
         with self.lock:
             self.status = {
