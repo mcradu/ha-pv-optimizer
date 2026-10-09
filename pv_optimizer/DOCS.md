@@ -31,6 +31,38 @@ These entities are derived signals only. They do not command the inverter or any
 
 The Ingress UI contains Overview, Control, Decision Inspector, Entity Health, and Settings sections. `Night MAX` is simulated for one calculation cycle and automatically returns to `Auto`.
 
+## House load baseline for battery charging (v0.2.11)
+
+PV Optimizer separates active downstairs AC heating from normal household draw
+when forecasting sunset battery charge. The compressor's current consumption
+is projected only for the estimated period until the room reaches its target.
+The remaining hours until sunset use the normal household baseline, built
+from **the previous 24 hours** of non-heating load samples.
+
+Sampling details:
+- Observe total household load as PV + battery + grid power under the existing
+  signed inverter conventions.
+- Exclude observations while the downstairs/upstairs AC or underfloor heating
+  is active, and for 180 seconds afterwards. This avoids counting the
+  compressor as a persistent baseload.
+- Retain all eligible observations from the previous rolling 24-hour window.
+  At the default 30-second poll, up to ~2,880 observations may be needed.
+- Compute one mean for each observed hourly band, then weight each available
+  band equally in the 24-hour aggregate. Missing hours do not have invented
+  observations: diagnostics show the actual count of covered hours.
+- Until there are twelve eligible observations, fall back to 450 W.
+- The sample archive is stored under /data in the add-on state and survives
+  restarts; filling a complete 24-hour history after first installation
+  naturally takes up to a day. Heater-free periods may cover fewer than
+  24 hourly bands if heating runs continuously.
+- Existing add-ons can retain 180 minutes in Supervisor's stored configuration;
+  v0.2.11 enforces an effective minimum of 1440 minutes anyway. Update the
+  displayed Configuration option to 1440 for consistency.
+
+The model does **not** assume instantaneous AC draw remains constant all the
+way to sunset. The energy interface still supplies the sunset SOC reachability
+signal to Heating Optimizer.
+
 ## Reference baseline
 
 - Package SHA-256: `bdb2d4ca214b60aef950fff0e8d3b81762b367988271c5c08ec60c8af14ae6ba`
