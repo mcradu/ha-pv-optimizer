@@ -43,6 +43,9 @@ DEFAULTS = {
     "pv_available_on_w": 300,
     "pv_available_off_w": 100,
     "forecast_safety_kwh": 0.5,
+    "baseline_window_minutes": 180,
+    "baseline_min_samples": 12,
+    "baseline_fallback_w": 450,
     "influxdb_enabled": True,
     "influxdb_url": "http://a0d7b954-influxdb:8086",
     "influxdb_database": "home_assistant",
@@ -65,6 +68,14 @@ DEFAULTS = {
         "grid_voltage_l2": "sensor.ss_grid_l2_voltage",
         "grid_voltage_l3": "sensor.ss_grid_l3_voltage",
         "battery_temperature": "sensor.ss_battery_temperature",
+        "ground_floor_temperature": "sensor.heating_optimizer_ground_floor_temperature",
+        "ground_floor_morning_target": "input_number.heating_optimizer_ground_floor_morning_target",
+        "ground_floor_solar_target": "input_number.heating_optimizer_ground_floor_ac_solar_stop_temperature",
+        "ground_floor_warming_rate": "input_number.heating_optimizer_ground_floor_morning_warming_rate",
+        "ground_floor_solar_active": "input_boolean.heating_optimizer_ground_floor_ac_solar_control_active",
+        "ac_down": "climate.ac_down",
+        "ac_up": "climate.ac_up",
+        "ufh_active": "binary_sensor.heating_optimizer_ufh_active",
     },
 }
 
@@ -74,7 +85,7 @@ class Runtime:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.9 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.10 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -116,6 +127,68 @@ class Runtime:
         if value in (None, "unknown", "unavailable"):
             raise ValueError(f"{name} is {value or 'missing'}")
         return float(value)
+
+    def _baseline_and_heating_horizon(
+        self, entities: dict, instant_house_load_w: float, hours_until_sunset: float
+    ) -> tuple[float, float, bool]:
+        """Rolling average without heating and estimated time to room target.
+
+        Reject heating and the first 180 seconds after heating. Keep samples
+        in the add-on state so the average survives a service restart.
+        """
+        now = time.time()
+        window_s = max(float(self.options["baseline_window_minutes"]), 1) * 60
+        samples = [
+            x for x in self.state.get("baseline_load_samples", [])
+            if isinstance(x, list) and len(x) == 2
+            and isinstance(x[0], (int, float))
+            and isinstance(x[1], (int, float))
+            and now - window_s <= x[0] <= now
+            and 0 < x[1] <= 10000
+        ][-720:]
+        down = entities.get("ac_down", {}).get("state")
+        up = entities.get("ac_up", {}).get("state")
+        ufh = entities.get("ufh_active", {}).get("state")
+        if down == "heat" or up == "heat" or ufh == "on":
+            self.state["baseline_last_heating_at"] = now
+        elif (
+            down == "off" and up == "off" and ufh == "off"
+            and now - float(self.state.get("baseline_last_heating_at", 0)) >= 180
+            and 0 < instant_house_load_w <= 10000
+        ):
+            samples.append([now, float(instant_house_load_w)])
+            samples = samples[-720:]
+        self.state["baseline_load_samples"] = samples
+        fallback_w = max(float(self.options["baseline_fallback_w"]), 0)
+        baseline_w = (
+            sum(item[1] for item in samples) / len(samples)
+            if len(samples) >= int(self.options["baseline_min_samples"])
+            else fallback_w
+        )
+        self.state["baseline_last_average_w"] = round(baseline_w, 1)
+        if now - float(self.state.get("baseline_last_saved_at", 0)) >= 300:
+            self.state["baseline_last_saved_at"] = now
+            self.save_state()
+
+        hours_to_target = 0.0
+        if down == "heat":
+            target_key = (
+                "ground_floor_solar_target"
+                if entities.get("ground_floor_solar_active", {}).get("state") == "on"
+                else "ground_floor_morning_target"
+            )
+            try:
+                room = self._number(entities["ground_floor_temperature"], "room")
+                target = self._number(entities[target_key], "room_target")
+                rate = self._number(entities["ground_floor_warming_rate"], "warming_rate")
+                if rate <= 0:
+                    raise ValueError("warming rate must be positive")
+                hours_to_target = max((target - room) / rate, 0)
+            except (ValueError, KeyError, TypeError):
+                # When the sensor is unavailable, reserve a bounded 2 h
+                # heating window rather than assuming zero energy usage.
+                hours_to_target = 2.0
+        return round(baseline_w, 2), min(hours_to_target, max(hours_until_sunset, 0)), down == "heat"
 
     def poll(self) -> None:
         entity_map = self.options["entities"]
@@ -179,6 +252,14 @@ class Runtime:
                 raise ValueError("sun.next_setting is missing")
             sunset = datetime.fromisoformat(next_setting.replace("Z", "+00:00"))
             hours_until_sunset = max((sunset - datetime.now(timezone.utc)).total_seconds() / 3600, 0)
+            load_w = max(
+                self._number(entities["pv_power"], "pv_power")
+                + self._number(entities["battery_power"], "battery_power")
+                + self._number(entities["grid_power"], "grid_power"), 0
+            )
+            baseline_w, heating_hours, heating_active = self._baseline_and_heating_horizon(
+                entities, load_w, hours_until_sunset
+            )
             charge_decision = calculate_charge(
                 ChargeInputs(
                     battery_soc=self._number(entities["battery_soc"], "battery_soc"),
@@ -193,6 +274,9 @@ class Runtime:
                     forecast_remaining_kwh=self._number(entities["forecast_today_remaining"], "forecast_today_remaining"),
                     hours_until_sunset=hours_until_sunset,
                     battery_capacity_kwh=float(self.options["battery_capacity_kwh"]),
+                    baseline_house_load_w=baseline_w,
+                    heating_hours_until_target=heating_hours,
+                    heating_active=heating_active,
                     sunset_target_soc=float(self.options["sunset_target_soc"]),
                     charge_on_voltage=float(self.options["charge_on_voltage"]),
                     charge_off_voltage=float(self.options["charge_off_voltage"]),
@@ -228,7 +312,7 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.9",
+                "version": "0.2.10",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
@@ -259,6 +343,9 @@ class Runtime:
         common = {
             "source": "pv_optimizer",
             "shadow": True,
+            "baseline_house_load_w": decision.get("baseline_house_load_w"),
+            "heating_hours_until_target": decision.get("heating_hours_until_target"),
+            "expected_house_load_kwh": decision.get("expected_house_load_kwh"),
             "sunset_target_soc": float(self.options["sunset_target_soc"]),
             "forecast_safety_kwh": float(self.options["forecast_safety_kwh"]),
         }
@@ -358,7 +445,7 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.9",
+            "version": "0.2.10",
             "shadow": True,
             "export_price_ron_per_kwh": float(self.options["export_price_ron_per_kwh"]),
             "import_price_ron_per_kwh": float(self.options["import_price_ron_per_kwh"]),
@@ -366,6 +453,9 @@ class Runtime:
             "supervisor_token_source": self.client.token_source or "none",
             "home_assistant_api_url": self.client.base_url,
             "configured_entity_count": len(self.options.get("entities", {})),
+            "baseline_window_minutes": self.options["baseline_window_minutes"],
+            "baseline_sample_count": len(self.state.get("baseline_load_samples", [])),
+            "baseline_house_load_w": self.state.get("baseline_last_average_w"),
             "influxdb_enabled": self.telemetry.enabled,
             "influxdb_target": f'{self.telemetry.database}.{self.telemetry.retention_policy}.{self.telemetry.measurement}',
             "influxdb_last_error": self.telemetry.last_error,
@@ -430,6 +520,9 @@ class Runtime:
             "expected_chargeable_before_sunset_kwh": decision.get("expected_chargeable_before_sunset_kwh"),
             "projected_shortfall_kwh": decision.get("projected_sunset_shortfall_kwh"),
             "available_solar_headroom_kwh": decision.get("available_solar_headroom_kwh"),
+            "baseline_house_load_w": decision.get("baseline_house_load_w"),
+            "heating_hours_until_target": decision.get("heating_hours_until_target"),
+            "expected_house_load_kwh": decision.get("expected_house_load_kwh"),
             "battery_target_reachable": decision.get("battery_target_reachable"),
         }
 
@@ -514,7 +607,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.9"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.10"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -557,7 +650,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.9 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.10 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],
