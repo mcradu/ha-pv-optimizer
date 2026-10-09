@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101b2a">
+  <title>Heating Optimizer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><div class="mark">◈</div><div><strong>Heating Optimizer</strong><small>Home Assistant · Add-on 0.1.0</small></div></div>
+    <div class="topstatus"><span id="health-indicator" class="light"></span><span id="health-label">Conectare…</span><span class="pill shadow">SHADOW MODE</span></div>
+  </header>
+  <div class="notice" role="status"><strong>Mod de observație.</strong> Acest add-on nu controlează AC-urile, centrala sau pardoseala. Automatizările Home Assistant existente rămân active până la finalizarea migrării.</div>
+  <nav class="tabs" aria-label="Secțiuni">
+    <button data-tab="overview" class="selected">Overview</button>
+    <button data-tab="schedule">Schedule & Control</button>
+    <button data-tab="energy">Energy & Savings</button>
+    <button data-tab="diagnostics">Diagnostics</button>
+  </nav>
+  <main>
+    <section id="overview" class="panel open">
+      <div class="heading"><div><h1>Starea încălzirii</h1><p>Deciziile propuse comparate cu echipamentele reale</p></div><div id="last-refresh" class="muted">—</div></div>
+      <div class="cards">
+        <article class="tile room"><div class="eyebrow">PARTE R · AC DOWN</div><div class="big" id="down-temperature">—</div><div class="tile-detail">Țintă <span id="down-target">—</span></div><div class="state-row"><span id="down-actual" class="pill neutral">—</span><span id="down-simulated" class="pill neutral">—</span></div><p class="reason" id="down-reasons">—</p></article>
+        <article class="tile room"><div class="eyebrow">ETAJ · AC UP</div><div class="big" id="up-temperature">—</div><div class="tile-detail">Țintă <span id="up-target">—</span></div><div class="state-row"><span id="up-actual" class="pill neutral">—</span><span id="up-simulated" class="pill neutral">—</span></div><p class="reason" id="up-reasons">—</p></article>
+        <article class="tile"><div class="eyebrow">BATERIE</div><div class="big" id="battery-soc">—</div><div id="battery-target" class="tile-detail">Prognoză indisponibilă</div><div class="progress"><div id="battery-fill"></div></div><div id="battery-headroom" class="muted">—</div></article>
+        <article class="tile"><div class="eyebrow">TAMPON TERMIC</div><div class="big" id="puffer-temperature">—</div><div class="tile-detail">Centrală: <span id="boiler-state">—</span></div><div class="tile-detail">Pardoseală: <span id="ufh-state">—</span></div><div class="muted">Monitorizare, fără comenzi</div></article>
+      </div>
+      <div class="two-col">
+        <article class="tile"><h2>Preîncălzirea de dimineață</h2><div class="metrics">
+          <div><span>Ora-țintă</span><strong id="morning-time">—</strong></div>
+          <div><span>Start estimat</span><strong id="morning-start">—</strong></div>
+          <div><span>Rezervă SOC</span><strong id="morning-reserve">—</strong></div>
+          <div><span>Buget energetic</span><strong id="morning-budget">—</strong></div>
+          <div><span>Fallback confort</span><strong id="morning-fallback">—</strong></div>
+          <div><span>Preheat eligibil</span><strong id="morning-eligible">—</strong></div>
+        </div></article>
+        <article class="tile"><h2>Protecții și stare</h2><div class="metrics">
+          <div><span>Minimum ON</span><strong>30 min</strong></div>
+          <div><span>Minimum OFF</span><strong>30 min</strong></div>
+          <div><span>Stabilizare prognoză ON</span><strong>2 min</strong></div>
+          <div><span>Stabilizare prognoză OFF</span><strong>5 min</strong></div>
+          <div><span>Prognoză stabilă</span><strong id="forecast-stable">—</strong></div>
+          <div><span>Control fizic</span><strong>Dezactivat</strong></div>
+        </div></article>
+      </div>
+    </section>
+    <section id="schedule" class="panel">
+      <div class="heading"><div><h1>Program & control</h1><p>Setările sunt păstrate în add-on. În această versiune influențează numai simularea.</p></div></div>
+      <form id="settings-form" class="settings">
+        <article class="tile"><h2>Strategia de încălzire</h2>
+          <label class="switchline"><input type="checkbox" name="morning_enabled"> Preîncălzire dimineața</label>
+          <label class="switchline"><input type="checkbox" name="comfort_fallback_enabled"> Fallback confort după ora-țintă</label>
+          <label class="switchline"><input type="checkbox" name="solar_down_enabled"> Încălzire solară parter</label>
+          <label class="switchline"><input type="checkbox" name="solar_up_enabled"> Încălzire solară etaj</label>
+          <div class="fields">
+            <label>Țintă dimineață, °C<input name="morning_target_c" type="number" step="0.1" min="18" max="25"></label>
+            <label>Rată încălzire, °C/h<input name="morning_warming_rate_c_per_h" type="number" step="0.05" min="0.2" max="2"></label>
+            <label>Rezervă baterie, %<input name="morning_reserve_soc" type="number" step="1" min="20" max="60"></label>
+            <label>Prag fallback, °C<input name="morning_fallback_deficit_c" type="number" step="0.1" min="0.2" max="2"></label>
+            <label>Prag pornire solar parter, °C<input name="solar_start_down_c" type="number" step="0.1" min="18" max="25"></label>
+            <label>Prag oprire solar parter, °C<input name="solar_stop_down_c" type="number" step="0.1" min="18" max="25"></label>
+            <label>Prag pornire solar etaj, °C<input name="solar_start_up_c" type="number" step="0.1" min="18" max="25"></label>
+            <label>Prag oprire solar etaj, °C<input name="solar_stop_up_c" type="number" step="0.1" min="18" max="25"></label>
+            <label>Minimum headroom solar, kWh<input name="solar_headroom_kwh" type="number" step="0.1" min="0" max="20"></label>
+            <label>Surplus solar la pornire, W<input name="solar_surplus_w" type="number" step="50" min="0" max="5000"></label>
+          </div>
+        </article>
+        <article class="tile"><h2>Ora de confort, pe zile</h2><div class="schedule-fields" id="schedule-fields"></div><p class="muted">Durata ON/OFF minimă de 30 minute este fixă în versiunea inițială, pentru siguranță.</p></article>
+        <div class="settings-footer"><button type="submit" class="primary" id="save-settings">Salvează setările</button><div class="message" id="settings-message" role="status"></div></div>
+      </form>
+    </section>
+    <section id="energy" class="panel">
+      <div class="heading"><div><h1>Energie & economii</h1><p>Sursa financiară: senzori vechi Home Assistant, până la migrarea istoricului.</p></div></div>
+      <div class="cards three">
+        <article class="tile"><div class="eyebrow">ECONOMIE NETĂ · AZI</div><div class="big" id="saving-day">—</div></article>
+        <article class="tile"><div class="eyebrow">ECONOMIE NETĂ · SĂPTĂMÂNĂ</div><div class="big" id="saving-week">—</div></article>
+        <article class="tile"><div class="eyebrow">ECONOMIE NETĂ · LUNĂ</div><div class="big" id="saving-month">—</div></article>
+      </div>
+      <article class="tile"><h2>Comparație: toate AC-urile din rețea vs utilizarea PV și bateriei</h2><div class="metrics">
+        <div><span>Cost ipotetic azi (doar rețea)</span><strong id="cost-grid-day">—</strong></div>
+        <div><span>Cost ipotetic săptămână</span><strong id="cost-grid-week">—</strong></div>
+        <div><span>Cost ipotetic lună</span><strong id="cost-grid-month">—</strong></div>
+        <div><span>Cost total încălzire azi</span><strong id="heat-cost">—</strong></div>
+      </div></article>
+      <article class="tile"><h2>Surplus PV și protecția bateriei</h2><div class="metrics">
+        <div><span>Headroom prognozat până la apus</span><strong id="energy-headroom">—</strong></div>
+        <div><span>Deficit estimat la apus</span><strong id="energy-shortfall">—</strong></div>
+        <div><span>Surplus instantaneu disponibil</span><strong id="energy-surplus">—</strong></div>
+      </div></article>
+    </section>
+    <section id="diagnostics" class="panel">
+      <div class="heading"><div><h1>Diagnostic & istoric</h1><p>Paritate pentru migrarea controlului; fără comenzi către actuatori</p></div></div>
+      <div class="two-col">
+        <article class="tile"><h2>Conexiune și sănătate</h2><div class="metrics">
+          <div><span>Stare</span><strong id="diag-state">—</strong></div>
+          <div><span>Ultima interogare</span><strong id="diag-time">—</strong></div>
+          <div><span>Entități disponibile</span><strong id="diag-entities">—</strong></div>
+          <div><span>Mod actuator</span><strong>Shadow only</strong></div>
+        </div><div id="diag-error" class="errorbox" hidden></div></article>
+        <article class="tile"><h2>Ultimele recomandări simulate</h2><div id="event-list" class="events muted">Nu există încă evenimente.</div></article>
+      </div>
+      <article class="tile"><h2>Observații HA</h2><div class="tablewrap"><table><thead><tr><th>Entitate</th><th>Valoare</th><th>Ultima actualizare</th></tr></thead><tbody id="entities-list"></tbody></table></div></article>
+    </section>
+  </main>
+  <footer>Heating Optimizer 0.1.0 · Control fizic dezactivat · Sursă: Home Assistant Core API</footer>
+</div>
+<script src="app.js" defer></script>
+</body>
+</html>
