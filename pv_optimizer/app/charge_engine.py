@@ -19,6 +19,11 @@ class ChargeInputs:
     forecast_remaining_kwh: float
     hours_until_sunset: float
     battery_capacity_kwh: float
+    # Non-heating consumption, averaged over a recent rolling window.
+    baseline_house_load_w: float = 450
+    # Estimated time until room temperature target is achieved.
+    heating_hours_until_target: float = 0
+    heating_active: bool = False
     sunset_target_soc: float = 100
     charge_on_voltage: float = 249
     charge_off_voltage: float = 247
@@ -35,7 +40,19 @@ def calculate_charge(values: ChargeInputs, current_request: str = "off") -> dict
     available_export_w = max(-values.grid_power_w, 0)
     estimated_house_load_w = max(values.pv_power_w + values.battery_power_w + values.grid_power_w, 0)
     energy_needed_kwh = max(values.sunset_target_soc - values.battery_soc, 0) / 100 * values.battery_capacity_kwh
-    expected_load_kwh = estimated_house_load_w / 1000 * max(values.hours_until_sunset, 0)
+    # Never extrapolate the compressor's instantaneous draw all the way to
+    # sunset. Use it only while heating up to the room target, then revert
+    # to the recent, heating-excluded household baseline.
+    remaining_hours = max(values.hours_until_sunset, 0)
+    heating_hours = min(
+        max(values.heating_hours_until_target, 0), remaining_hours
+    ) if values.heating_active else 0
+    baseline_w = max(values.baseline_house_load_w, 0)
+    heating_load_w = max(estimated_house_load_w, baseline_w)
+    expected_load_kwh = (
+        heating_load_w * heating_hours
+        + baseline_w * (remaining_hours - heating_hours)
+    ) / 1000
     expected_chargeable_kwh = max(values.forecast_remaining_kwh - expected_load_kwh, 0) * 0.95
     sunset_shortfall_kwh = max(energy_needed_kwh + values.forecast_safety_kwh - expected_chargeable_kwh, 0)
     available_solar_headroom_kwh = max(expected_chargeable_kwh - energy_needed_kwh - values.forecast_safety_kwh, 0)
@@ -94,6 +111,10 @@ def calculate_charge(values: ChargeInputs, current_request: str = "off") -> dict
         "current_charge_w": round(current_charge_w),
         "available_export_w": round(available_export_w),
         "estimated_house_load_w": round(estimated_house_load_w),
+        "baseline_house_load_w": round(baseline_w),
+        "estimated_heating_load_w": round(heating_load_w),
+        "heating_hours_until_target": round(heating_hours, 3),
+        "expected_house_load_kwh": round(expected_load_kwh, 3),
         "energy_needed_by_sunset_kwh": round(energy_needed_kwh, 3),
         "expected_chargeable_before_sunset_kwh": round(expected_chargeable_kwh, 3),
         "projected_sunset_shortfall_kwh": round(sunset_shortfall_kwh, 3),
