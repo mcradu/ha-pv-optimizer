@@ -31,6 +31,8 @@ jobs:
           test -f heating_optimizer/app/static/style.css
       - name: Python syntax
         run: python -m compileall -q heating_optimizer/app heating_optimizer/tests
+      - name: Ingress UI JavaScript syntax
+        run: node --check heating_optimizer/app/static/app.js
       - name: Regression tests
         run: python -m unittest discover -s heating_optimizer/tests -p 'test_*.py' -v
       - name: Add-on configuration and static UI paths
