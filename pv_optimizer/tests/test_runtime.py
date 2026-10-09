@@ -83,5 +83,66 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(calls["binary_sensor.pv_optimizer_battery_target_reachable"][1], "on")
 
 
+    def test_heating_phase_uses_room_target_and_excludes_ac_from_baseline(self):
+        import run
+        runtime = object.__new__(run.Runtime)
+        runtime.options = {
+            "baseline_window_minutes": 180,
+            "baseline_min_samples": 1,
+            "baseline_fallback_w": 450,
+        }
+        runtime.state = {}
+        runtime.save_state = MagicMock()
+        entities = {
+            "ac_down": {"state": "off"},
+            "ac_up": {"state": "off"},
+            "ufh_active": {"state": "off"},
+            "ground_floor_temperature": {"state": "21.5"},
+            "ground_floor_morning_target": {"state": "22.5"},
+            "ground_floor_solar_target": {"state": "23.0"},
+            "ground_floor_warming_rate": {"state": "0.8"},
+            "ground_floor_solar_active": {"state": "off"},
+        }
+        with patch.object(run.time, "time", return_value=100000):
+            baseline, horizon, active = runtime._baseline_and_heating_horizon(entities, 420, 13)
+        self.assertEqual((baseline, horizon, active), (420, 0, False))
+        self.assertEqual(len(runtime.state["baseline_load_samples"]), 1)
+
+        entities["ac_down"]["state"] = "heat"
+        with patch.object(run.time, "time", return_value=100030):
+            baseline, horizon, active = runtime._baseline_and_heating_horizon(entities, 1100, 13)
+        self.assertEqual((baseline, horizon, active), (420, 1.25, True))
+        self.assertEqual(len(runtime.state["baseline_load_samples"]), 1)
+
+        entities["ac_down"]["state"] = "off"
+        with patch.object(run.time, "time", return_value=100090):
+            runtime._baseline_and_heating_horizon(entities, 1100, 13)
+        self.assertEqual(len(runtime.state["baseline_load_samples"]), 1)
+
+    def test_solar_mode_uses_solar_stop_temperature(self):
+        import run
+        runtime = object.__new__(run.Runtime)
+        runtime.options = {
+            "baseline_window_minutes": 180,
+            "baseline_min_samples": 2,
+            "baseline_fallback_w": 450,
+        }
+        runtime.state = {}
+        runtime.save_state = MagicMock()
+        entities = {
+            "ac_down": {"state": "heat"},
+            "ac_up": {"state": "off"},
+            "ufh_active": {"state": "off"},
+            "ground_floor_temperature": {"state": "22.0"},
+            "ground_floor_morning_target": {"state": "22.5"},
+            "ground_floor_solar_target": {"state": "23.0"},
+            "ground_floor_warming_rate": {"state": "0.5"},
+            "ground_floor_solar_active": {"state": "on"},
+        }
+        with patch.object(run.time, "time", return_value=100000):
+            baseline, horizon, active = runtime._baseline_and_heating_horizon(entities, 1200, 13)
+        self.assertEqual((baseline, horizon, active), (450, 2.0, True))
+
+
 if __name__ == "__main__":
     unittest.main()
