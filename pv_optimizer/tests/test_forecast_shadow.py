@@ -1,6 +1,9 @@
 import unittest
 from datetime import datetime, timedelta, timezone
-from app.forecast_shadow import compare_shadow, integrate
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parents[1] / 'app'))
+from forecast_shadow import compare_shadow, integrate
 UTC = timezone.utc
 
 
