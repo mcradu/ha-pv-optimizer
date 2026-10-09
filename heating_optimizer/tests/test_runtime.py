@@ -98,17 +98,17 @@ class RuntimeTests(unittest.TestCase):
         import re
         from engine import DEFAULT_SETTINGS
         html = (Path(__file__).parents[1] / "app" / "static" / "index.html").read_text()
-        fields = set(re.findall(r'name="([^"]+)"', html))
+        fields = set(re.findall(r'<input[^>]+name="([^"]+)"', html))
         self.assertTrue(fields)
         self.assertEqual(
             {name for name in fields if not name.startswith("schedule_")}
             - set(DEFAULT_SETTINGS),
             set(),
         )
-        self.assertEqual(
-            {name.removeprefix("schedule_") for name in fields if name.startswith("schedule_")},
-            set(run.DAYS),
-        )
+        js = (Path(__file__).parents[1] / "app" / "static" / "app.js").read_text()
+        self.assertIn('field.name = "schedule_" + day', js)
+        for day in run.DAYS:
+            self.assertIn('["' + day + '"', js)
 
 
 if __name__ == "__main__":
