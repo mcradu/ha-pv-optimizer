@@ -1,5 +1,5 @@
 name: HA PV Optimizer
-version: "0.2.9"
+version: "0.2.10"
 slug: pv_optimizer
 description: Explainable PV battery-export optimization with an integrated Web UI
 url: https://github.com/mcradu/ha-pv-optimizer
@@ -39,6 +39,9 @@ options:
   pv_available_on_w: 300
   pv_available_off_w: 100
   forecast_safety_kwh: 0.5
+  baseline_window_minutes: 180
+  baseline_min_samples: 12
+  baseline_fallback_w: 450
   influxdb_enabled: true
   influxdb_url: http://a0d7b954-influxdb:8086
   influxdb_database: home_assistant
@@ -61,6 +64,14 @@ options:
     grid_voltage_l2: sensor.ss_grid_l2_voltage
     grid_voltage_l3: sensor.ss_grid_l3_voltage
     battery_temperature: sensor.ss_battery_temperature
+    ground_floor_temperature: sensor.heating_optimizer_ground_floor_temperature
+    ground_floor_morning_target: input_number.heating_optimizer_ground_floor_morning_target
+    ground_floor_solar_target: input_number.heating_optimizer_ground_floor_ac_solar_stop_temperature
+    ground_floor_warming_rate: input_number.heating_optimizer_ground_floor_morning_warming_rate
+    ground_floor_solar_active: input_boolean.heating_optimizer_ground_floor_ac_solar_control_active
+    ac_down: climate.ac_down
+    ac_up: climate.ac_up
+    ufh_active: binary_sensor.heating_optimizer_ufh_active
 schema:
   poll_interval_seconds: int(5,300)
   battery_capacity_kwh: float(1,200)
@@ -82,6 +93,9 @@ schema:
   pv_available_on_w: int(0,5000)
   pv_available_off_w: int(0,5000)
   forecast_safety_kwh: float(0,20)
+  baseline_window_minutes: int(15,720)
+  baseline_min_samples: int(1,100)
+  baseline_fallback_w: float(50,10000)
   influxdb_enabled: bool
   influxdb_url: str
   influxdb_database: str
@@ -104,3 +118,11 @@ schema:
     grid_voltage_l2: str
     grid_voltage_l3: str
     battery_temperature: str
+    ground_floor_temperature: str
+    ground_floor_morning_target: str
+    ground_floor_solar_target: str
+    ground_floor_warming_rate: str
+    ground_floor_solar_active: str
+    ac_down: str
+    ac_up: str
+    ufh_active: str
