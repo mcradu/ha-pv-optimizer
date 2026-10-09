@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.10
+
+- Replace the all-day instantaneous household load extrapolation with two phases:
+  heating draw until the ground-floor room reaches its configured target, then
+  the moving average of heater-free household consumption for the remaining
+  hours to sunset.
+- Keep a three-hour rolling consumption history in add-on state across restarts.
+  Exclude AC/underfloor heating periods and the first three minutes after heating.
+  Use a configurable 450 W fallback until twelve clean samples exist.
+- Read the ground-floor temperature, morning and solar room targets, and
+  warming-rate helpers from Home Assistant. Publish projected heating hours,
+  household baseline power and daily remaining-load forecast as diagnostics
+  and InfluxDB telemetry.
+- Preserve sunset battery-charge targets and all inverter actions in shadow mode.
+- The Heating Optimizer consumes the revised PV reachability signal and enforces
+  30-minute minimum on/off times before starting/stopping the morning AC.
+
 ## 0.2.9
 
 - Add configurable `import_price_ron_per_kwh` and publish it as `sensor.pv_optimizer_import_price`.
