@@ -1,0 +1,28 @@
+name: HA Heating Optimizer
+version: "0.1.0"
+slug: heating_optimizer
+description: Shadow-first heating optimization, energy-aware scheduling and integrated UI
+url: https://github.com/mcradu/ha-pv-optimizer
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8098
+panel_icon: mdi:home-thermometer
+panel_title: Heating Optimizer
+panel_admin: true
+homeassistant_api: true
+watchdog: http://[HOST]:[PORT:8098]/api/health
+backup: hot
+stage: experimental
+options:
+  poll_interval_seconds: 30
+  shadow_mode: true
+  timezone: Europe/Bucharest
+schema:
+  poll_interval_seconds: int(10,300)
+  shadow_mode: bool
+  timezone: str
