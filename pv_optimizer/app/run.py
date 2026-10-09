@@ -14,6 +14,7 @@ from engine import Inputs, calculate
 from charge_engine import ChargeInputs, calculate_charge
 from ha_client import HomeAssistantClient
 from telemetry import InfluxTelemetry
+from forecast_shadow import compare_shadow, read_forecast, _parse
 
 ROOT = Path(__file__).parent
 OPTIONS_PATH = Path("/data/options.json")
@@ -55,6 +56,8 @@ DEFAULTS = {
     "influxdb_username": "",
     "influxdb_password": "",
     "shadow_mode": True,
+    "load_forecast_shadow_enabled": False,
+    "load_forecast_shadow_url": "http://192.168.0.10:8100/api/v1/forecast",
     "entities": {
         "battery_soc": "sensor.ss_battery_soc",
         "pv_power": "sensor.ss_pv_power",
@@ -102,6 +105,8 @@ class Runtime:
             default_measurement="pv_optimizer_night_injection",
         )
         self.last_error_signature = ""
+        self.next_forecast_poll_at = 0.0
+
 
     @staticmethod
     def _load_json(path: Path, fallback: dict) -> dict:
@@ -218,6 +223,39 @@ class Runtime:
                 # heating window rather than assuming zero energy usage.
                 hours_to_target = 2.0
         return round(baseline_w, 2), min(hours_to_target, max(hours_until_sunset, 0)), down == "heat"
+
+    def _load_forecast_shadow(self, entities: dict, night: dict, charge: dict) -> dict:
+        """Best-effort 15-minute side-channel. Never changes decisions or blockers."""
+        if not self.options.get("load_forecast_shadow_enabled", False):
+            return {"state": "disabled", "used_for_control": False}
+        if time.time() < self.next_forecast_poll_at:
+            return self.state.get("load_forecast_shadow", {
+                "state": "waiting", "used_for_control": False
+            })
+        self.next_forecast_poll_at = time.time() + 900
+        now = datetime.now(timezone.utc)
+        try:
+            sun = entities.get("sun", {})
+            next_rising = sun.get("attributes", {}).get("next_rising")
+            next_setting = sun.get("attributes", {}).get("next_setting")
+            model = read_forecast(str(self.options["load_forecast_shadow_url"]))
+            result = compare_shadow(
+                model, now,
+                _parse(next_rising) if next_rising else None,
+                _parse(next_setting) if next_setting else None,
+                sun.get("state") == "below_horizon",
+                charge.get("expected_house_load_kwh"),
+                float(self.options["static_night_load_w"]),
+            )
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
+            result = {
+                "state": "unavailable",
+                "used_for_control": False,
+                "reason": str(exc)[:200],
+            }
+        self.state["load_forecast_shadow"] = result
+        self.save_state()
+        return result
 
     def poll(self) -> None:
         entity_map = self.options["entities"]
@@ -336,6 +374,7 @@ class Runtime:
         night_record = self._night_telemetry_record(entities, decision)
         self.night_telemetry.append(night_record)
         self._log_night_transition(night_record)
+        forecast_shadow = self._load_forecast_shadow(entities, decision, charge_decision)
 
         with self.lock:
             self.status = {
@@ -347,6 +386,7 @@ class Runtime:
                 "entities": entities,
                 "decision": decision,
                 "charge_decision": charge_decision,
+                "load_forecast_shadow": forecast_shadow,
                 "charge_telemetry": self.telemetry.latest(100),
                 "night_telemetry": self.night_telemetry.latest(100),
                 "telemetry_error": self.telemetry.last_error or self.night_telemetry.last_error,
