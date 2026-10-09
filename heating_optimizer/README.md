@@ -15,9 +15,9 @@ The app fetches Home Assistant states from the Supervisor's Core API every 30 se
 
 ## Migration and cutover (NOT YET PERFORMED)
 
-1. **Shadow:** install 0.1.0, compare a week of `recommendations` and source measurements against the active YAML automations, validate morning preheat, upstairs solar, buffer logic, gas economics and safety.
-2. **Parity:** migrate weekly/monthly cost aggregation to add-on-owned durable state or InfluxDB without losing historical baselines; implement and regression-test the Home Assistant actuator service calls.
-3. **Handoff:** verify backup and rollback; only after a validated active add-on is available, turn off the legacy *control* automations while retaining any necessary observation sensors. Do not turn off the legacy thermostat or boiler actuation without implementing an equivalent.
+1. **Shadow (max 24h):** verify the exact installed SHA and healthy runtime, then start a *single* 24-hour validation window. Compare `recommendations` and actual device transitions against YAML; cover morning preheat, solar zone starts/stops, battery/temperature guards and 30-minute physical dwell. If a natural transition does not occur, exercise it via a tested replay, **not** by artificially cycling the physical AC. At the 24-hour limit issue an explicit **go/no-go** decision; never silently extend shadow for a week.
+2. **Parity and readiness:** validate safe HA service calls, exclusive single-controller ownership, stale-telemetry behaviour, Supervisor restart and automatic/manual rollback in an active-capable version. Financial history migration can follow later *if* the old observability entities are intentionally retained; it is not a reason to delay a validated control handoff.
+3. **Handoff (go only):** verify backup and rollback; only after a validated active add-on is available, gate/disable the legacy AC *control* automations while retaining necessary observation sensors, and enable exactly one active controller. Do not turn off the existing thermostat, boiler, or UFH fallback. **No-go:** keep legacy YAML active and close the shadow evaluation with explicit blockers. Never turn on the unimplemented active mode of v0.1.0.
 4. **Remove package:** only when the replacement owns every required raw sensor dependency, all dashboards, and the thermostat/boiler ownership boundaries are verified. This migration is separate from the add-on installation.
 
 Checks: `python3 -m unittest discover -s heating_optimizer/tests -v`. See `DOCS.md` for the complete data contract.
