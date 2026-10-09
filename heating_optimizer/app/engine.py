@@ -28,10 +28,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "solar_stop_down_c": 23.0,
     "solar_start_up_c": 22.3,
     "solar_stop_up_c": 23.0,
-    "solar_headroom_kwh": 0.6,
-    "solar_surplus_w": 1000,
-    "solar_max_grid_import_w": 200,
-    "solar_max_battery_discharge_w": 200,
+    "solar_headroom_down_kwh": 0.6,
+    "solar_headroom_up_kwh": 0.6,
+    "solar_surplus_down_w": 1000,
+    "solar_surplus_up_w": 1000,
+    "solar_max_grid_down_w": 200,
+    "solar_max_grid_up_w": 200,
+    "solar_max_battery_down_w": 200,
+    "solar_max_battery_up_w": 200,
     "min_on_seconds": 1800,
     "min_off_seconds": 1800,
     "pv_on_stable_seconds": 120,
@@ -163,8 +167,8 @@ def _zone(
     solar_wanted = (
         settings["solar_" + zone + "_enabled"] and solar["within_start_window"]
         and room is not None and room < settings["solar_start_" + zone + "_c"]
-        and solar["headroom_ok"] and solar["surplus_ok"]
-        and solar["grid_ok"] and solar["battery_draw_ok"]
+        and solar["headroom_ok_" + zone] and solar["surplus_ok_" + zone]
+        and solar["grid_ok_" + zone] and solar["battery_draw_ok_" + zone]
     )
     start_mode = "morning" if morning_wanted else "solar" if solar_wanted else None
     if not has_sensor:
@@ -210,10 +214,10 @@ def _zone(
                 elif room is not None and room >= settings["solar_stop_" + zone + "_c"]:
                     action = "would_stop"
                     reason.append("solar_target_reached")
-                elif not solar["headroom_ok"]:
+                elif not solar["headroom_ok_" + zone]:
                     action = "would_stop"
                     reason.append("solar_headroom_exhausted")
-                elif solar["nonsolar_elapsed"] >= settings["non_solar_delay_seconds"]:
+                elif solar["nonsolar_elapsed_" + zone] >= settings["non_solar_delay_seconds"]:
                     action = "would_stop"
                     reason.append("grid_or_battery_draw_excessive")
     else:
@@ -225,7 +229,7 @@ def _zone(
             reason.append("await_favourable_PV_forecast")
         elif since < settings["min_off_seconds"]:
             reason.append("minimum_OFF_remaining_%ds" % int(settings["min_off_seconds"] - since))
-        elif zone == "up" and solar["other_zone_stabilizing"]:
+        elif start_mode == "solar" and now_ts - tracker.get("last_any_ac_start", 0) < 120:
             reason.append("AC_start_stabilization")
         else:
             action = "would_start"
@@ -307,25 +311,33 @@ def evaluate(states: dict, settings: dict, tracker: dict, now: datetime) -> dict
     surplus_w = (max(-(grid or 0), 0) + max(-(battery_w or 0), 0)) if (
         grid is not None and battery_w is not None
     ) else None
-    nonsolar = (
-        (grid is not None and grid > settings["solar_max_grid_import_w"])
-        or (battery_w is not None and battery_w > settings["solar_max_battery_discharge_w"])
-    )
-    nonsolar_elapsed = _stable(
-        tracker.setdefault("stability", {}), "non_solar",
-        nonsolar if grid is not None and battery_w is not None else None, now_ts
-    ) if nonsolar else 0
     h = now.hour * 60 + now.minute
     solar = {
         "within_start_window": 8 * 60 + 5 <= h < 22 * 60 + 30,
         "end_window": h >= 23 * 60,
-        "headroom_ok": headroom is not None and headroom >= settings["solar_headroom_kwh"],
-        "surplus_ok": surplus_w is not None and surplus_w >= settings["solar_surplus_w"],
-        "grid_ok": grid is not None and grid <= settings["solar_max_grid_import_w"],
-        "battery_draw_ok": battery_w is not None and battery_w <= settings["solar_max_battery_discharge_w"],
-        "nonsolar_elapsed": nonsolar_elapsed,
-        "other_zone_stabilizing": now_ts - tracker.get("last_any_ac_start", 0) < 120,
     }
+    for zone in ("down", "up"):
+        solar["headroom_ok_" + zone] = (
+            headroom is not None and headroom >= settings["solar_headroom_" + zone + "_kwh"]
+        )
+        solar["surplus_ok_" + zone] = (
+            surplus_w is not None and surplus_w >= settings["solar_surplus_" + zone + "_w"]
+        )
+        solar["grid_ok_" + zone] = (
+            grid is not None and grid <= settings["solar_max_grid_" + zone + "_w"]
+        )
+        solar["battery_draw_ok_" + zone] = (
+            battery_w is not None and battery_w <= settings["solar_max_battery_" + zone + "_w"]
+        )
+        nonsolar = (
+            None if grid is None or battery_w is None else
+            not (solar["grid_ok_" + zone] and solar["battery_draw_ok_" + zone])
+        )
+        elapsed = _stable(
+            tracker.setdefault("stability", {}),
+            "non_solar_" + zone, nonsolar, now_ts
+        )
+        solar["nonsolar_elapsed_" + zone] = elapsed if nonsolar else 0
     morning = {
         "schedule_target": schedule,
         "predicted_start": predicted_start.isoformat(),
