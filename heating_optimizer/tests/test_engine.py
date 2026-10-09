@@ -123,6 +123,31 @@ class ShadowEngineTests(unittest.TestCase):
         self.assertEqual(decision["financial"]["financial_week"], 7.25)
         self.assertEqual(decision["financial"]["source"], "legacy_observed")
 
+    def test_direct_beko_fault_bitmap_overrides_legacy_sensor(self):
+        self.at(0)
+        self.at(3)
+        states = source(fault_down="0")
+        states[ENTITY_IDS["ac_down"]]["attributes"] = {"tuya_fault_bitmap": 4}
+        result = evaluate(states, self.settings, self.tracker,
+                          START + timedelta(minutes=4))
+        self.assertEqual(result["zones"]["down"]["recommendation"], "would_stop")
+        self.assertIn("hardware_fault", result["zones"]["down"]["reasons"])
+
+    def test_missing_critical_telemetry_proposes_fail_safe_stop(self):
+        self.at(0)
+        self.at(3)
+        result = self.at(4, down_temp="unavailable")
+        self.assertEqual(result["zones"]["down"]["recommendation"], "would_stop")
+        self.assertIn("critical_telemetry_missing", result["zones"]["down"]["reasons"])
+
+    def test_missing_pv_for_five_minutes_stops_after_minimum_on(self):
+        self.at(0)
+        self.at(3)
+        self.at(10, pv_reachable="unavailable")
+        result = self.at(34, pv_reachable="unavailable")
+        self.assertEqual(result["zones"]["down"]["recommendation"], "would_stop")
+        self.assertIn("sunset_recharge_forecast_adverse", result["zones"]["down"]["reasons"])
+
 
 if __name__ == "__main__":
     unittest.main()
