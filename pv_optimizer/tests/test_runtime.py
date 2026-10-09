@@ -143,6 +143,94 @@ class RuntimeTests(unittest.TestCase):
             baseline, horizon, active = runtime._baseline_and_heating_horizon(entities, 1200, 13)
         self.assertEqual((baseline, horizon, active), (450, 2.0, True))
 
+    def test_default_baseline_window_is_full_day(self):
+        import run
+        self.assertEqual(run.DEFAULTS["baseline_window_minutes"], 1440)
+
+    def test_legacy_180_minute_config_is_upgraded_at_runtime(self):
+        import run
+        with tempfile.TemporaryDirectory() as directory:
+            options = Path(directory) / "options.json"
+            state = Path(directory) / "state.json"
+            options.write_text(json.dumps({
+                "shadow_mode": True,
+                "baseline_window_minutes": 180
+            }))
+            with patch.object(run, "OPTIONS_PATH", options), patch.object(run, "STATE_PATH", state):
+                runtime = run.Runtime()
+        self.assertEqual(runtime.options["baseline_window_minutes"], 1440)
+
+    def test_24h_samples_not_limited_to_720_and_outside_day_excluded(self):
+        import run
+        runtime = object.__new__(run.Runtime)
+        runtime.options = {
+            "baseline_window_minutes": 180,   # Old, persisted setting.
+            "baseline_min_samples": 12,
+            "baseline_fallback_w": 450,
+            "poll_interval_seconds": 30,
+        }
+        now = 1000000
+        # One sample every 30s across the last 24h, plus one older
+        # sample that must be removed.
+        samples = [
+            [now - 86430, 9999],
+            *[[now - 86370 + i * 30, 400 + (i // 120) * 3]
+              for i in range(2878)]
+        ]
+        runtime.state = {"baseline_load_samples": samples}
+        runtime.save_state = MagicMock()
+        entities = {
+            "ac_down": {"state": "heat"},
+            "ac_up": {"state": "off"},
+            "ufh_active": {"state": "off"},
+            "ground_floor_temperature": {"state": "22.0"},
+            "ground_floor_morning_target": {"state": "22.5"},
+            "ground_floor_solar_target": {"state": "23.0"},
+            "ground_floor_warming_rate": {"state": "0.8"},
+            "ground_floor_solar_active": {"state": "off"},
+        }
+        with patch.object(run.time, "time", return_value=now):
+            baseline, horizon, active = runtime._baseline_and_heating_horizon(
+                entities, 1200, 12
+            )
+        self.assertTrue(active)
+        self.assertGreater(len(runtime.state["baseline_load_samples"]), 2800)
+        self.assertNotIn([now - 86430, 9999], runtime.state["baseline_load_samples"])
+        self.assertEqual(runtime.state["baseline_covered_hours"], 24)
+        self.assertGreater(runtime.state["baseline_oldest_sample_age_h"], 23)
+        self.assertGreater(baseline, 400)
+        self.assertLess(baseline, 500)
+
+    def test_hour_balanced_average_not_biased_by_high_frequency_polling(self):
+        import run
+        runtime = object.__new__(run.Runtime)
+        runtime.options = {
+            "baseline_window_minutes": 1440,
+            "baseline_min_samples": 12,
+            "baseline_fallback_w": 450,
+            "poll_interval_seconds": 5,
+        }
+        now = 1000000
+        # 200 samples near now at 1000 W, 12 samples 13h ago
+        # at 200 W. Arithmetic point average would be ~955 W;
+        # equal-hour average is 600 W.
+        samples = [
+            *[[now - 2*i - 10, 1000] for i in range(200)],
+            *[[now - 13*3600 - 30*i, 200] for i in range(12)],
+        ]
+        runtime.state = {"baseline_load_samples": samples}
+        runtime.save_state = MagicMock()
+        entities = {"ac_down": {"state": "heat"}, "ac_up": {"state": "off"},
+                    "ufh_active": {"state": "off"},
+                    "ground_floor_temperature": {"state": "22"},
+                    "ground_floor_morning_target": {"state": "22.5"},
+                    "ground_floor_warming_rate": {"state": "0.8"},
+                    "ground_floor_solar_active": {"state": "off"}}
+        with patch.object(run.time, "time", return_value=now):
+            baseline, _, _ = runtime._baseline_and_heating_horizon(entities, 1300, 13)
+        self.assertAlmostEqual(baseline, 600, places=0)
+        self.assertEqual(runtime.state["baseline_covered_hours"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
