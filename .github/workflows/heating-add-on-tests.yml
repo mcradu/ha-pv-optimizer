@@ -1,0 +1,49 @@
+name: Heating Optimizer Add-on CI
+
+on:
+  push:
+    paths:
+      - 'heating_optimizer/**'
+      - '.github/workflows/heating-add-on-tests.yml'
+  pull_request:
+    paths:
+      - 'heating_optimizer/**'
+      - '.github/workflows/heating-add-on-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify engine and UI files exist
+        run: |
+          test -f heating_optimizer/config.yaml
+          test -f heating_optimizer/Dockerfile
+          test -f heating_optimizer/app/static/index.html
+          test -f heating_optimizer/app/static/app.js
+          test -f heating_optimizer/app/static/style.css
+      - name: Python syntax
+        run: python -m compileall -q heating_optimizer/app heating_optimizer/tests
+      - name: Regression tests
+        run: python -m unittest discover -s heating_optimizer/tests -p 'test_*.py' -v
+      - name: Add-on configuration and static UI paths
+        run: |
+          python -m pip install 'PyYAML>=6,<7'
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+          d=yaml.safe_load(Path('heating_optimizer/config.yaml').read_text())
+          assert d['ingress'] is True
+          assert d['homeassistant_api'] is True
+          assert d['options']['shadow_mode'] is True
+          assert d['ingress_port']==8098
+          assert d['version']=='0.1.0'
+          print('Add-on metadata OK')
+          PY
