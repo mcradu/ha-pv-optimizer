@@ -24,7 +24,7 @@
     <section id="overview" class="panel open">
       <div class="heading"><div><h1>Starea încălzirii</h1><p>Deciziile propuse comparate cu echipamentele reale</p></div><div id="last-refresh" class="muted">—</div></div>
       <div class="cards">
-        <article class="tile room"><div class="eyebrow">PARTE R · AC DOWN</div><div class="big" id="down-temperature">—</div><div class="tile-detail">Țintă <span id="down-target">—</span></div><div class="state-row"><span id="down-actual" class="pill neutral">—</span><span id="down-simulated" class="pill neutral">—</span></div><p class="reason" id="down-reasons">—</p></article>
+        <article class="tile room"><div class="eyebrow">PARTER · AC DOWN</div><div class="big" id="down-temperature">—</div><div class="tile-detail">Țintă <span id="down-target">—</span></div><div class="state-row"><span id="down-actual" class="pill neutral">—</span><span id="down-simulated" class="pill neutral">—</span></div><p class="reason" id="down-reasons">—</p></article>
         <article class="tile room"><div class="eyebrow">ETAJ · AC UP</div><div class="big" id="up-temperature">—</div><div class="tile-detail">Țintă <span id="up-target">—</span></div><div class="state-row"><span id="up-actual" class="pill neutral">—</span><span id="up-simulated" class="pill neutral">—</span></div><p class="reason" id="up-reasons">—</p></article>
         <article class="tile"><div class="eyebrow">BATERIE</div><div class="big" id="battery-soc">—</div><div id="battery-target" class="tile-detail">Prognoză indisponibilă</div><div class="progress"><div id="battery-fill"></div></div><div id="battery-headroom" class="muted">—</div></article>
         <article class="tile"><div class="eyebrow">TAMPON TERMIC</div><div class="big" id="puffer-temperature">—</div><div class="tile-detail">Centrală: <span id="boiler-state">—</span></div><div class="tile-detail">Pardoseală: <span id="ufh-state">—</span></div><div class="muted">Monitorizare, fără comenzi</div></article>
@@ -65,8 +65,14 @@
             <label>Prag oprire solar parter, °C<input name="solar_stop_down_c" type="number" step="0.1" min="18" max="25"></label>
             <label>Prag pornire solar etaj, °C<input name="solar_start_up_c" type="number" step="0.1" min="18" max="25"></label>
             <label>Prag oprire solar etaj, °C<input name="solar_stop_up_c" type="number" step="0.1" min="18" max="25"></label>
-            <label>Minimum headroom solar, kWh<input name="solar_headroom_kwh" type="number" step="0.1" min="0" max="20"></label>
-            <label>Surplus solar la pornire, W<input name="solar_surplus_w" type="number" step="50" min="0" max="5000"></label>
+            <label>Headroom solar parter, kWh<input name="solar_headroom_down_kwh" type="number" step="0.1" min="0" max="20"></label>
+            <label>Headroom solar etaj, kWh<input name="solar_headroom_up_kwh" type="number" step="0.1" min="0" max="20"></label>
+            <label>Surplus solar parter, W<input name="solar_surplus_down_w" type="number" step="50" min="0" max="5000"></label>
+            <label>Surplus solar etaj, W<input name="solar_surplus_up_w" type="number" step="50" min="0" max="5000"></label>
+            <label>Import maxim parter, W<input name="solar_max_grid_down_w" type="number" step="50" min="0" max="2000"></label>
+            <label>Import maxim etaj, W<input name="solar_max_grid_up_w" type="number" step="50" min="0" max="2000"></label>
+            <label>Descărcare baterie parter, W<input name="solar_max_battery_down_w" type="number" step="50" min="0" max="2000"></label>
+            <label>Descărcare baterie etaj, W<input name="solar_max_battery_up_w" type="number" step="50" min="0" max="2000"></label>
           </div>
         </article>
         <article class="tile"><h2>Ora de confort, pe zile</h2><div class="schedule-fields" id="schedule-fields"></div><p class="muted">Durata ON/OFF minimă de 30 minute este fixă în versiunea inițială, pentru siguranță.</p></article>
