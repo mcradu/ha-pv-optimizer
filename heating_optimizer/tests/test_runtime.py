@@ -76,6 +76,40 @@ class RuntimeTests(unittest.TestCase):
             bad["monday"] = "27:93"
             run.validate_settings({"morning_schedule": bad})
 
+    def test_one_time_helper_import_includes_weekday_clock_and_zone_settings(self):
+        states = {
+            "input_boolean.heating_optimizer_ground_floor_ac_schedule_enabled": {"state": "on"},
+            "input_number.heating_optimizer_ground_floor_morning_target": {"state": "22.6"},
+            "input_number.heating_optimizer_upstairs_ac_solar_start_surplus": {"state": "1250"},
+            "input_number.heating_optimizer_ground_floor_ac_solar_start_temperature": {"state": "22.0"},
+        }
+        for day in run.DAYS:
+            states["input_datetime.heating_optimizer_morning_target_time_" + day] = {
+                "state": "07:30:00"
+            }
+        imported = run.import_legacy_settings(states)
+        self.assertTrue(imported["morning_enabled"])
+        self.assertEqual(imported["morning_target_c"], 22.6)
+        self.assertEqual(imported["solar_surplus_up_w"], 1250)
+        self.assertEqual(imported["morning_schedule"]["monday"], "07:30")
+        self.assertEqual(run.validate_settings(imported)["morning_target_c"], 22.6)
+
+    def test_settings_form_fields_match_actual_config(self):
+        import re
+        from engine import DEFAULT_SETTINGS
+        html = (Path(__file__).parents[1] / "app" / "static" / "index.html").read_text()
+        fields = set(re.findall(r'name="([^"]+)"', html))
+        self.assertTrue(fields)
+        self.assertEqual(
+            {name for name in fields if not name.startswith("schedule_")}
+            - set(DEFAULT_SETTINGS),
+            set(),
+        )
+        self.assertEqual(
+            {name.removeprefix("schedule_") for name in fields if name.startswith("schedule_")},
+            set(run.DAYS),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
