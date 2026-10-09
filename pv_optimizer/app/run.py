@@ -43,7 +43,7 @@ DEFAULTS = {
     "pv_available_on_w": 300,
     "pv_available_off_w": 100,
     "forecast_safety_kwh": 0.5,
-    "baseline_window_minutes": 180,
+    "baseline_window_minutes": 1440,
     "baseline_min_samples": 12,
     "baseline_fallback_w": 450,
     "influxdb_enabled": True,
@@ -84,8 +84,14 @@ class Runtime:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.options = self._load_json(OPTIONS_PATH, DEFAULTS)
+        # A pre-0.2.11 add-on may retain 180 minutes in Supervisor
+        # options.json after upgrading. Keep a *minimum* 24-hour effective
+        # lookback regardless of that legacy value so the cycle is complete.
+        self.options["baseline_window_minutes"] = max(
+            1440, int(self.options.get("baseline_window_minutes", 1440))
+        )
         if self.options.get("shadow_mode") is not True:
-            raise RuntimeError("Version 0.2.10 requires shadow_mode=true")
+            raise RuntimeError("Version 0.2.11 requires shadow_mode=true")
         self.state = self._load_json(STATE_PATH, {"requested_mode": "auto", "logs": []})
         self.status: dict = {"state": "starting", "shadow": True, "entities": {}, "decision": {}}
         self.client = HomeAssistantClient()
@@ -131,13 +137,17 @@ class Runtime:
     def _baseline_and_heating_horizon(
         self, entities: dict, instant_house_load_w: float, hours_until_sunset: float
     ) -> tuple[float, float, bool]:
-        """Rolling average without heating and estimated time to room target.
+        """24h clock-balanced baseline, excluding active heating, plus room target ETA.
 
-        Reject heating and the first 180 seconds after heating. Keep samples
-        in the add-on state so the average survives a service restart.
+        Reject heating and the first 180 seconds after heating. Keep all
+        relevant 24h samples (not just the most recent 720 observations).
+        Build an average of the observed per-hour means so a burst of polls
+        in one hour does not dominate an entire household daily cycle.
+        Retain source samples in /data across add-on restarts.
         """
         now = time.time()
-        window_s = max(float(self.options["baseline_window_minutes"]), 1) * 60
+        # Force 24 hours even if the old UI has stored 180 minutes.
+        window_s = max(float(self.options.get("baseline_window_minutes", 1440)), 1440) * 60
         samples = [
             x for x in self.state.get("baseline_load_samples", [])
             if isinstance(x, list) and len(x) == 2
@@ -145,7 +155,12 @@ class Runtime:
             and isinstance(x[1], (int, float))
             and now - window_s <= x[0] <= now
             and 0 < x[1] <= 10000
-        ][-720:]
+        ]
+        # Bounded by actual polling frequency, not by a fixed 720-point cap:
+        # at the default 30 s cadence a whole day requires ~2,880 samples.
+        polling_s = max(float(self.options.get("poll_interval_seconds", 30)), 5)
+        max_samples = int(window_s / polling_s) + 30
+        samples = samples[-max_samples:]
         down = entities.get("ac_down", {}).get("state")
         up = entities.get("ac_up", {}).get("state")
         ufh = entities.get("ufh_active", {}).get("state")
@@ -157,15 +172,29 @@ class Runtime:
             and 0 < instant_house_load_w <= 10000
         ):
             samples.append([now, float(instant_house_load_w)])
-            samples = samples[-720:]
+            samples = samples[-max_samples:]
         self.state["baseline_load_samples"] = samples
         fallback_w = max(float(self.options["baseline_fallback_w"]), 0)
+        hourly: dict[int, list[float]] = {}
+        for sample_ts, sample_w in samples:
+            # Buckets cover up to the previous 24 hourly bands, in local
+            # elapsed time. Equal weight per hour avoids poll-rate bias.
+            hour = min(int((now - sample_ts) / 3600), 23)
+            hourly.setdefault(hour, []).append(sample_w)
+        hour_means = [
+            sum(values) / len(values)
+            for values in hourly.values()
+        ]
         baseline_w = (
-            sum(item[1] for item in samples) / len(samples)
+            sum(hour_means) / len(hour_means)
             if len(samples) >= int(self.options["baseline_min_samples"])
             else fallback_w
         )
         self.state["baseline_last_average_w"] = round(baseline_w, 1)
+        self.state["baseline_covered_hours"] = len(hourly)
+        self.state["baseline_oldest_sample_age_h"] = (
+            round((now - samples[0][0]) / 3600, 2) if samples else 0
+        )
         if now - float(self.state.get("baseline_last_saved_at", 0)) >= 300:
             self.state["baseline_last_saved_at"] = now
             self.save_state()
@@ -312,7 +341,7 @@ class Runtime:
             self.status = {
                 "state": decision["state"],
                 "shadow": True,
-                "version": "0.2.10",
+                "version": "0.2.11",
                 "last_update": datetime.now(timezone.utc).isoformat(),
                 "errors": errors,
                 "entities": entities,
@@ -445,7 +474,7 @@ class Runtime:
 
     def diagnostics(self) -> dict:
         return {
-            "version": "0.2.10",
+            "version": "0.2.11",
             "shadow": True,
             "export_price_ron_per_kwh": float(self.options["export_price_ron_per_kwh"]),
             "import_price_ron_per_kwh": float(self.options["import_price_ron_per_kwh"]),
@@ -455,6 +484,8 @@ class Runtime:
             "configured_entity_count": len(self.options.get("entities", {})),
             "baseline_window_minutes": self.options["baseline_window_minutes"],
             "baseline_sample_count": len(self.state.get("baseline_load_samples", [])),
+            "baseline_covered_hours": self.state.get("baseline_covered_hours", 0),
+            "baseline_oldest_sample_age_h": self.state.get("baseline_oldest_sample_age_h", 0),
             "baseline_house_load_w": self.state.get("baseline_last_average_w"),
             "influxdb_enabled": self.telemetry.enabled,
             "influxdb_target": f'{self.telemetry.database}.{self.telemetry.retention_policy}.{self.telemetry.measurement}',
@@ -607,7 +638,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            self._json({"status": "ok", "shadow": True, "version": "0.2.10"})
+            self._json({"status": "ok", "shadow": True, "version": "0.2.11"})
         elif path == "/api/status":
             with RUNTIME.lock:
                 self._json(RUNTIME.status)
@@ -650,7 +681,7 @@ def poll_loop() -> None:
 
 
 if __name__ == "__main__":
-    RUNTIME.add_log("PV Optimizer 0.2.10 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
+    RUNTIME.add_log("PV Optimizer 0.2.11 started with configurable export pricing and parallel charge and night-injection InfluxDB telemetry in mandatory shadow mode")
     LOG.info(
         "Supervisor API diagnostics: token_present=%s api_url=%s",
         RUNTIME.diagnostics()["supervisor_token_present"],
