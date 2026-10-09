@@ -60,7 +60,7 @@ class ChargeEngineTests(unittest.TestCase):
         result = calculate_charge(base(), "off")
         self.assertTrue(result["battery_target_reachable"])
         self.assertEqual(result["projected_sunset_shortfall_kwh"], 0)
-        self.assertAlmostEqual(result["available_solar_headroom_kwh"], 34.25, places=3)
+        self.assertAlmostEqual(result["available_solar_headroom_kwh"], 36.862, places=3)
 
     def test_shortfall_blocks_battery_target_reachable_and_headroom(self):
         result = calculate_charge(base(forecast_remaining_kwh=2, battery_soc=50), "off")
@@ -71,6 +71,62 @@ class ChargeEngineTests(unittest.TestCase):
     def test_already_reached_target_is_reachable(self):
         result = calculate_charge(base(battery_soc=100, forecast_remaining_kwh=0), "on")
         self.assertTrue(result["battery_target_reachable"])
+
+
+    def test_heating_load_is_only_projected_until_room_target(self):
+        result = calculate_charge(base(
+            battery_soc=74,
+            forecast_remaining_kwh=18.252,
+            hours_until_sunset=13,
+            pv_power_w=0,
+            battery_power_w=1050,
+            grid_power_w=0,
+            baseline_house_load_w=450,
+            heating_active=True,
+            heating_hours_until_target=1.25,
+        ), "off")
+        self.assertTrue(result["battery_target_reachable"])
+        self.assertAlmostEqual(result["expected_house_load_kwh"], 6.6, places=2)
+        self.assertAlmostEqual(result["heating_hours_until_target"], 1.25)
+        self.assertEqual(result["baseline_house_load_w"], 450)
+
+    def test_after_target_only_baseline_is_used(self):
+        result = calculate_charge(base(
+            pv_power_w=0,
+            battery_power_w=1100,
+            grid_power_w=0,
+            hours_until_sunset=10,
+            baseline_house_load_w=400,
+            heating_active=True,
+            heating_hours_until_target=0,
+        ), "off")
+        self.assertAlmostEqual(result["expected_house_load_kwh"], 4.0)
+
+    def test_heating_window_is_bounded_by_sunset(self):
+        result = calculate_charge(base(
+            pv_power_w=0,
+            battery_power_w=1200,
+            grid_power_w=0,
+            hours_until_sunset=2,
+            baseline_house_load_w=450,
+            heating_active=True,
+            heating_hours_until_target=8,
+        ), "off")
+        self.assertEqual(result["heating_hours_until_target"], 2)
+        self.assertAlmostEqual(result["expected_house_load_kwh"], 2.4)
+
+    def test_heater_off_projects_household_average_only(self):
+        result = calculate_charge(base(
+            pv_power_w=0,
+            battery_power_w=1200,
+            grid_power_w=0,
+            baseline_house_load_w=450,
+            heating_active=False,
+            heating_hours_until_target=4,
+            hours_until_sunset=12,
+        ), "off")
+        self.assertEqual(result["heating_hours_until_target"], 0)
+        self.assertAlmostEqual(result["expected_house_load_kwh"], 5.4)
 
 
 if __name__ == "__main__":
